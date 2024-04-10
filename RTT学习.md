@@ -41,7 +41,26 @@ expn:判断条件;当条件不满足时;数组的长度初始化为-1,即编译�
 
   这种技术被称为宏过载，它允许你根据传入的参数数量来选择不同的宏来执行。
 
-  `_FUN`在这里的作用是作为一个占位符，它代表了要调用的函数。迎随时向我提问。
+  `_FUN`在这里的作用是作为一个占位符，它代表了要调用的函数。
+
+## 3. 
+
+```c
+#define RTM_EXPORT(symbol)                                            \
+const char __rtmsym_##symbol##_name[] rt_section(".rodata.name") = #symbol;     \
+const struct rt_module_symtab __rtmsym_##symbol rt_section("RTMSymTab")= \
+{                                                                     \
+    (void *)&symbol,                                                  \
+    __rtmsym_##symbol##_name                                          \
+};
+```
+
+1. `__rtmsym_##symbol##_name`：这是一个字符串常量，存储在`.rodata.name`段中。
+2. `__rtmsym_##symbol`：这是一个`rt_module_symtab`结构体的实例，存储在`RTMSymTab`段中(.text)。它包含两个字段：
+   - 一个是指向符号的指针。
+   - 另一个是指向符号名称的指针。
+
+这个宏定义的目的是为了在运行时能够通过符号的名称查找到符号的地址，实现动态链接和加载模块.
 
 # 2.链接文件
 
@@ -577,4 +596,63 @@ https://club.rt-thread.org/ask/question/d5156cdf3abb63a1.html
 ## 8.1 `rtthread_startup`
 
 1. 中断禁用
-2. 
+2. 板级初始化
+
+## 8.2 rt_hw_board_init
+
+1. I/D cache初始化
+2. 时钟初始化
+3. 外设时钟初始化
+4. 堆初始化`rt_system_heap_init`
+
+5. 组件初始化`rt_components_board_init`
+
+# 9. 内存管理
+
+https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/programming-manual/memory/memory
+
+## 9.1 初始化
+
+1. `rt_system_heap_init`
+
+- 对堆开始地址与结束地址进行内存对齐
+- 在ART-PI中将所有剩余ROM划分给堆使用
+- 断言堆设置是否正常
+- 根据配置的内存策略 使用`_MEM_INIT`
+- 初始化多线程争用锁
+
+## 9.2 小内存管理算法
+
+- 小内存管理算法主要针对系统资源比较少，一般用于小于 2MB 内存空间的系统
+
+### 9.2.1 `rt_smem_init`
+
+1. 内存对齐
+2. 内存大小计算;至少需要满足两个`struct rt_small_mem_item`结构体;因为堆起始与结束各有一个结构体
+3. **内存对象初始化**：然后，它将对齐后的内存区域清零，并初始化一个小内存对象（`small_mem`）
+4. **堆初始化**：接下来，它将堆的开始地址设置为对齐后的内存的开始地址，并初始化堆的开始和结束位置。每个位置都是一个`struct rt_small_mem_item`结构体，包含了一个指向内存池的指针（`pool_ptr`）、下一个和上一个项目的地址（`next`和`prev`）等。
+5. **最低空闲指针初始化**：最后，它将最低空闲指针（`lfree`）设置为堆的开始位置，并返回指向内存对象的指针。
+6. 如果启用`RT_USING_MEMTRACE`,则会设置线程名称为init
+
+### 9.2.2 alloc分配
+
+- 使用_MEM_MALLOC,操作`system_heap`
+
+1. 从当前的空闲内存块开始，遍历整个内存池，直到找到一个足够大的内存块或者遍历完整个内存池
+2. 获取当前内存块的地址。
+3. 
+
+## 9.3 slab 管理算法
+
+-  slab 内存管理算法则主要是在系统资源比较丰富时，提供了一种近似多内存池管理算法的快速算法
+
+## 9.4 memheap 管理算法
+
+- memheap 方法适用于系统存在多个内存堆的情况，它可以将多个内存 “粘贴” 在一起，形成一个大的内存堆，用户使用起来会非常方便
+
+## 9.5 malloc分配
+
+1. 线程中使用加锁,中断中使用不加锁
+2. _MEM_MALLOC 调用不同内存算法的malloc
+3. 解锁
+4. 调用malloc call函数
