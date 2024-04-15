@@ -624,23 +624,188 @@ https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/p
 ## 9.2 小内存管理算法
 
 - 小内存管理算法主要针对系统资源比较少，一般用于小于 2MB 内存空间的系统
+- 每个内存对象的起始12字节不可使用,设置为堆系统的配置
+
+```c
+//这是一个掩码，用于将内存地址的最低位清零。在 RTT 的内存管理中，内存块的地址的最低位被用作标记该内存块是否被使用。
+#define MEM_MASK             0xfffffffe
+//这个宏用于标记内存块 _mem 为已使用。它首先使用 MEM_MASK 将 _mem 的最低位清零，然后将最低位设置为 1，表示该内存块已被使用。
+#define MEM_USED(_mem)       ((((rt_base_t)(_mem)) & MEM_MASK) | 0x1)
+#define MEM_FREED(_mem)      ((((rt_base_t)(_mem)) & MEM_MASK) | 0x0)
+//这将使用 ~MEM_MASK（即 MEM_MASK 的按位取反）与 pool_ptr 进行按位与操作。由于 MEM_MASK 的最低位是 0，所以 ~MEM_MASK 的最低位是 1。这意味着这个操作将提取出 pool_ptr 的最低位，即内存块的使用状态标记。
+#define MEM_ISUSED(_mem)   \
+                      (((rt_base_t)(((struct rt_small_mem_item *)(_mem))->pool_ptr)) & (~MEM_MASK))
+```
+
+![](readme.assets/08smem_work.svg)
 
 ### 9.2.1 `rt_smem_init`
 
 1. 内存对齐
 2. 内存大小计算;至少需要满足两个`struct rt_small_mem_item`结构体;因为堆起始与结束各有一个结构体
-3. **内存对象初始化**：然后，它将对齐后的内存区域清零，并初始化一个小内存对象（`small_mem`）
-4. **堆初始化**：接下来，它将堆的开始地址设置为对齐后的内存的开始地址，并初始化堆的开始和结束位置。每个位置都是一个`struct rt_small_mem_item`结构体，包含了一个指向内存池的指针（`pool_ptr`）、下一个和上一个项目的地址（`next`和`prev`）等。
-5. **最低空闲指针初始化**：最后，它将最低空闲指针（`lfree`）设置为堆的开始位置，并返回指向内存对象的指针。
-6. 如果启用`RT_USING_MEMTRACE`,则会设置线程名称为init
+
+```c
+/* 初始化堆起始位置内存对象*/
+struct rt_small_mem_item *mem;
+mem        = (struct rt_small_mem_item *)small_mem->heap_ptr;//堆起始位置初始化
+mem->pool_ptr = MEM_FREED(small_mem);//小内存堆对象地址 设置为释放
+mem->next  = small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM;//下一个内存对象设置到堆结尾内存对象
+mem->prev  = 0;//上一个对象为空
+//写入堆起始位置分配的内存名称
+rt_smem_setname(mem, "INIT");
+
+/* 堆大小 */
+small_mem->mem_size_aligned = mem_size;
+/* 指向堆的起始地址 */
+small_mem->heap_ptr = (rt_uint8_t *)begin_align;
+/* 初始化指向堆开始的最低空闲指针*/
+small_mem->lfree = (struct rt_small_mem_item *)small_mem->heap_ptr;
+
+//初始化堆结束内存对象性
+small_mem->heap_end        = (struct rt_small_mem_item *)&small_mem->heap_ptr[mem->next];//初始化设置为堆起始地址的下一个内存对象为堆结束地址
+small_mem->heap_end->pool_ptr = MEM_USED(small_mem);//设置为使用
+small_mem->heap_end->next  = small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM;//下一个设置为自身
+small_mem->heap_end->prev  = small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM;//上一个设置为自身
+
+//写入堆结束位置分配的内存名称
+rt_smem_setname(small_mem->heap_end, "INIT");
+```
 
 ### 9.2.2 alloc分配
 
 - 使用_MEM_MALLOC,操作`system_heap`
 
-1. 从当前的空闲内存块开始，遍历整个内存池，直到找到一个足够大的内存块或者遍历完整个内存池
-2. 获取当前内存块的地址。
-3. 
+```c
+rt_size_t ptr;
+//从当前的空闲内存块开始，遍历整个内存池，直到找到一个足够大的内存块或者遍历完整个内存池
+for (ptr = (rt_uint8_t *)small_mem->lfree - small_mem->heap_ptr;
+     ptr <= small_mem->mem_size_aligned - size;
+     ptr = ((struct rt_small_mem_item *)&small_mem->heap_ptr[ptr])->next)
+{
+    //查找未使用的内存且满足大小的区域
+    if ((!MEM_ISUSED(mem)) && (mem->next - (ptr + SIZEOF_STRUCT_MEM)) >= size)
+    {
+        //获取当前内存块的地址。
+        mem = (struct rt_small_mem_item *)&small_mem->heap_ptr[ptr];
+        //* 如果当前内存块足够大，那么可以将其分割成两个部分，一个用于分配，另一个保留为新的空闲内存块 */
+        if (mem->next - (ptr + SIZEOF_STRUCT_MEM) >=
+                    (size + SIZEOF_STRUCT_MEM + MIN_SIZE_ALIGNED))
+        {
+                /* 创建新的空闲内存块 */
+                ptr2 = ptr + SIZEOF_STRUCT_MEM + size;
+                mem2       = (struct rt_small_mem_item *)&small_mem->heap_ptr[ptr2];
+                mem2->pool_ptr = MEM_FREED(small_mem);
+                mem2->next = mem->next;
+                mem2->prev = ptr;
+
+                /* 更新当前内存块的next指针，使其指向新的空闲内存块 */
+                mem->next = ptr2;
+
+                /* 如果新的空闲内存块不是最后一个内存块，那么更新下一个内存块的prev指针，使其指向新的空闲内存块 */
+                if (mem2->next != small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM)
+                    ((struct rt_small_mem_item *)&small_mem->heap_ptr[mem2->next])->prev = ptr2;
+
+                /* 更新已使用的内存大小和最大使用内存大小 */
+                small_mem->parent.used += (size + SIZEOF_STRUCT_MEM);
+                if (small_mem->parent.max < small_mem->parent.used)
+                    small_mem->parent.max = small_mem->parent.used;
+        }
+        else
+        {
+            /* 更新已使用的内存大小 */
+            small_mem->parent.used += mem->next - ((rt_uint8_t *)mem - small_mem->heap_ptr);
+            if (small_mem->parent.max < small_mem->parent.used)
+                small_mem->parent.max = small_mem->parent.used;
+        }
+        /* 设置当前分配内存为使用中 */
+        mem->pool_ptr = MEM_USED(small_mem);
+        //线程分配的设置线程名称
+        if (rt_thread_self())
+            rt_smem_setname(mem, rt_thread_self()->parent.name);
+        else
+            //中断分配设置为NONE
+            rt_smem_setname(mem, "NONE");
+        //如果使用的是已经分配到的最大堆地址
+        if (mem == small_mem->lfree)
+        {
+            /* 在内存之后找到下一个空闲块并更新最低空闲指针 */
+            while (MEM_ISUSED(small_mem->lfree) && small_mem->lfree != small_mem->heap_end)
+                small_mem->lfree = &small_mem->heap_ptr[small_mem->lfree->next];
+        }
+    }
+}
+```
+
+1. 第一次分配内存时
+
+```c
+ptr = 0;
+mem = (struct rt_small_mem_item *)&small_mem->heap_ptr[0];//第一个内存对象
+//* 如果当前内存块足够大，那么可以将其分割成两个部分，一个用于分配，另一个保留为新的空闲内存块 */
+if (mem->next - (ptr + SIZEOF_STRUCT_MEM) >=
+    (size + SIZEOF_STRUCT_MEM + MIN_SIZE_ALIGNED))
+{
+    mem2->next = mem->next;//mem2指向堆末尾
+    mem2->prev = ptr;//上一个指向堆起始
+    mem->next = ptr2;//堆起始的下一个更新为mem2
+    
+    /* 如果新的空闲内存块不是最后一个内存块，那么更新下一个内存块的prev指针，使其指向新的空闲内存块 */
+    if (mem2->next != small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM)
+    {
+        //堆结尾的内存对象的上一个对象设置为mem2
+        ((struct rt_small_mem_item *)&small_mem->heap_ptr[mem2->next])->prev = ptr2;  
+    }
+
+}
+```
+
+2. 再一次分配内存时,如果分配后剩余的内存空间不够再开辟一个内存对象时
+
+```c
+            /* 更新已使用的内存大小 */
+            small_mem->parent.used += mem->next - ((rt_uint8_t *)mem - small_mem->heap_ptr);
+            if (small_mem->parent.max < small_mem->parent.used)
+                small_mem->parent.max = small_mem->parent.used;
+```
+
+### 9.2.3 realloc
+
+```c
+if (newsize + SIZEOF_STRUCT_MEM + MIN_SIZE < size)//当前内存块大小满足可分配区域
+{
+    /*分割内存块*/
+    small_mem->parent.used -= (size - newsize);
+
+    ptr2 = ptr + SIZEOF_STRUCT_MEM + newsize;
+    mem2 = (struct rt_small_mem_item *)&small_mem->heap_ptr[ptr2];
+    mem2->pool_ptr = MEM_FREED(small_mem);
+    mem2->next = mem->next;
+    mem2->prev = ptr;
+    //合并相邻的未使用内存区域
+    plug_holes(small_mem, mem2);
+} else {
+    /*扩展内存*/
+    nmem = rt_smem_alloc(&small_mem->parent, newsize);
+    if (nmem != RT_NULL) /* check memory */
+    {
+        rt_memcpy(nmem, rmem, size < newsize ? size : newsize);
+        //释放原使用内存
+        rt_smem_free(rmem);
+    }
+}
+```
+
+### 9.2.4 plug_holes
+
+- 处理内存碎片的。它试图通过合并相邻的未使用的内存块（称为“空洞”）来减少内存碎片。这个过程被称为“填充空洞”
+
+- 获取前一个内存项,尝试合并;获取后一个尝试合并
+
+### 9.2.5 free
+
+- 当前地址设置为未使用
+- 写入内存使用为空rt_smem_setname(mem, "   ");
+- plug_holes
 
 ## 9.3 slab 管理算法
 
@@ -650,7 +815,7 @@ https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/p
 
 - memheap 方法适用于系统存在多个内存堆的情况，它可以将多个内存 “粘贴” 在一起，形成一个大的内存堆，用户使用起来会非常方便
 
-## 9.5 malloc分配
+## 9.5 malloc&&realloc分配
 
 1. 线程中使用加锁,中断中使用不加锁
 2. _MEM_MALLOC 调用不同内存算法的malloc
