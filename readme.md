@@ -1,12 +1,12 @@
 # RTT 学习
 
-[TOC]
+[toc]
 
 # 1. 宏
 
 ## 1. 编译警告宏
 
-```c 
+```c
 /* compile time assertion */
 #define RT_STATIC_ASSERT(name, expn) typedef char _static_assert_##name[(expn)?1:-1]
 
@@ -17,7 +17,7 @@ expn:判断条件;当条件不满足时;数组的长度初始化为-1,即编译�
 
 ## 2. 宏过载
 
-```c 
+```c
 #define __MSH_GET_MACRO(_1, _2, _3, _FUN, ...)  _FUN
 
 /**
@@ -35,15 +35,15 @@ expn:判断条件;当条件不满足时;数组的长度初始化为-1,即编译�
         _MSH_FUNCTION_CMD2)(__VA_ARGS__)
 ```
 
-- 这个宏`__MSH_GET_MACRO`的作用是选择一个函数来调用。它接受五个参数：`_1`，`_2`，`_3`，`_FUN`和`__VA_ARGS__`，然后返回`_FUN`。
+- 这个宏 `__MSH_GET_MACRO`的作用是选择一个函数来调用。它接受五个参数：`_1`，`_2`，`_3`，`_FUN`和 `__VA_ARGS__`，然后返回 `_FUN`。
 
-  `__MSH_GET_MACRO`被用来根据传入的参数数量来选择要调用的函数。具体来说，如果传入的参数数量为2，那么`_FUN`就是`_MSH_FUNCTION_CMD2`；如果传入的参数数量为3，那么`_FUN`就是`_MSH_FUNCTION_CMD2_OPT`。
+  `__MSH_GET_MACRO`被用来根据传入的参数数量来选择要调用的函数。具体来说，如果传入的参数数量为2，那么 `_FUN`就是 `_MSH_FUNCTION_CMD2`；如果传入的参数数量为3，那么 `_FUN`就是 `_MSH_FUNCTION_CMD2_OPT`。
 
   这种技术被称为宏过载，它允许你根据传入的参数数量来选择不同的宏来执行。
 
   `_FUN`在这里的作用是作为一个占位符，它代表了要调用的函数。
 
-## 3. 
+## 3.
 
 ```c
 #define RTM_EXPORT(symbol)                                            \
@@ -55,8 +55,8 @@ const struct rt_module_symtab __rtmsym_##symbol rt_section("RTMSymTab")= \
 };
 ```
 
-1. `__rtmsym_##symbol##_name`：这是一个字符串常量，存储在`.rodata.name`段中。
-2. `__rtmsym_##symbol`：这是一个`rt_module_symtab`结构体的实例，存储在`RTMSymTab`段中(.text)。它包含两个字段：
+1. `__rtmsym_##symbol##_name`：这是一个字符串常量，存储在 `.rodata.name`段中。
+2. `__rtmsym_##symbol`：这是一个 `rt_module_symtab`结构体的实例，存储在 `RTMSymTab`段中(.text)。它包含两个字段：
    - 一个是指向符号的指针。
    - 另一个是指向符号名称的指针。
 
@@ -102,13 +102,13 @@ SECTIONS
 ```
 
 - 第一行设置了特殊符号'.'，这是位置计数器。如果您没有以其他方式指定输出部分的地址(稍后将描述其他方式)，则从位置计数器的当前值设置该地址。然后，位置计数器按输出部分的大小递增。在“SECTIONS”命令的开头，位置计数器的值为“0”。
-- ' *'是一个通配符，可以匹配任何文件名。表达式` *(.text)`表示所有'。所有输入文件中的文本输入节。
+- ' *'是一个通配符，可以匹配任何文件名。表达式 ` *(.text)`表示所有'。所有输入文件中的文本输入节。
 
 ## 2.3.`.linkonce` 段
 
 https://ftp.gnu.org/old-gnu/Manuals/gas/html_node/as_102.html
 
-`.gnu.linkonce.t`是一个链接器区段，用于存放那些只需要链接一次的函数或者符号。区段名称后面通常跟着函数或者符号的名字。关于`linkonce`的概念，GCC文档给出的解释是：“某些情况下，编译器为了优化而生成的代码项，不必在每一个包含了相同代码的编译单元中都出现。编译器将这些代码项放在`.linkonce`区段中，链接器在链接时只保留一份。”
+`.gnu.linkonce.t`是一个链接器区段，用于存放那些只需要链接一次的函数或者符号。区段名称后面通常跟着函数或者符号的名字。关于 `linkonce`的概念，GCC文档给出的解释是：“某些情况下，编译器为了优化而生成的代码项，不必在每一个包含了相同代码的编译单元中都出现。编译器将这些代码项放在 `.linkonce`区段中，链接器在链接时只保留一份。”
 
 `linkonce`区段有几种类型:
 
@@ -117,7 +117,7 @@ https://ftp.gnu.org/old-gnu/Manuals/gas/html_node/as_102.html
 - `.gnu.linkonce.r.*`（用于常量数据）;
 - `.gnu.linkonce.t.*`（用于文本，也就是可执行代码）等。
 
-例如，如果你有一个函数 `foo`，GCC可能将其编译]到`.gnu.linkonce.t.foo`区段中，如果链接时发现其它对象文件也有`.gnu.linkonce.t.foo`，那么链接器只会保留其中一份。这主要用于C++中的`inline`函数或模板函数，通常情况下，每一个使用到这些函数的源文件都会生成一份函数的实例，但是链接时只需要保留一份即可。这样可以减少目标文件的大小，提高链接效率。
+例如，如果你有一个函数 `foo`，GCC可能将其编译]到 `.gnu.linkonce.t.foo`区段中，如果链接时发现其它对象文件也有 `.gnu.linkonce.t.foo`，那么链接器只会保留其中一份。这主要用于C++中的 `inline`函数或模板函数，通常情况下，每一个使用到这些函数的源文件都会生成一份函数的实例，但是链接时只需要保留一份即可。这样可以减少目标文件的大小，提高链接效率。
 
 ## 2.4. KEEP
 
@@ -125,7 +125,7 @@ https://ftp.gnu.org/old-gnu/Manuals/gas/html_node/as_102.html
 
 ## 2.5 ENTRY
 
-程序中执行的第一条指令称为**入口点**。使用`ENTRY`链接描述文件命令来设置入口点。
+程序中执行的第一条指令称为**入口点**。使用 `ENTRY`链接描述文件命令来设置入口点。
 
 有几种方法可以设置入口点。链接器将依次尝试以下方法来设置入口点，当其中一个方法成功时停止:
 
@@ -141,13 +141,13 @@ https://ftp.gnu.org/old-gnu/Manuals/gas/html_node/as_102.html
 PROVIDE(__dtors_end__ = .);
 ```
 
-- 只有在引用但未定义的情况下，才能使用提供`PROVIDE`关键字来定义符号;如果`__dtors_end__`已经被定义，那么`PROVIDE`语句将被忽略。这对于为某些符号提供默认值很有用。这在考虑构造函数和析构函数列表符号(如' __CTOR_LIST__ ')时尤为重要，因为这些符号通常被定义为通用符号。
+- 只有在引用但未定义的情况下，才能使用提供 `PROVIDE`关键字来定义符号;如果 `__dtors_end__`已经被定义，那么 `PROVIDE`语句将被忽略。这对于为某些符号提供默认值很有用。这在考虑构造函数和析构函数列表符号(如' __CTOR_LIST__ ')时尤为重要，因为这些符号通常被定义为通用符号。
 
 ## 2.7 AT
 
 `AT`关键字用于指定节（section）在内存中的加载地址。这个地址是物理地址，与链接地址（即节在输出文件中的位置）可能不同。
 
-例如，在`.data : AT (_sidata)`这行代码中，`.data`节将被加载到内存的`_sidata`地址处。这通常用于ROM到RAM的复制操作，其中`_sidata`是在ROM中存储的初始化数据的开始地址。
+例如，在 `.data : AT (_sidata)`这行代码中，`.data`节将被加载到内存的 `_sidata`地址处。这通常用于ROM到RAM的复制操作，其中 `_sidata`是在ROM中存储的初始化数据的开始地址。
 
 ## 2.8 SORT
 
@@ -161,7 +161,7 @@ SORT(.dtors.*)会把所有以.dtors.开头的部分按照字母顺序排序。�
 
 ## 2.9 NOLOAD
 
-- `.RxDecripSection`，`.TxDecripSection`和`.RxArraySection`都被设置为`NOLOAD`，这意味着在程序执行时，它们不会被加载到内存中。这通常用于DMA操作，其中硬件需要知道数据的物理地址，而不是由MMU管理的虚拟地址。通常用于DMA配置,例如以太网
+- `.RxDecripSection`，`.TxDecripSection`和 `.RxArraySection`都被设置为 `NOLOAD`，这意味着在程序执行时，它们不会被加载到内存中。这通常用于DMA操作，其中硬件需要知道数据的物理地址，而不是由MMU管理的虚拟地址。通常用于DMA配置,例如以太网
 
 # 3. FINSH模块
 
@@ -180,8 +180,8 @@ SORT(.dtors.*)会把所有以.dtors.开头的部分按照字母顺序排序。�
         __fsymtab_end = .;
 ```
 
-- `__fsymtab_start`和`__fsymtab_end`用于指明finsh使用内存
-- FSymTab用于存放所有注册命令的结构体`struct finsh_syscall`,包括命令名称,命令选项,命令描述,命令函数执行地址信息
+- `__fsymtab_start`和 `__fsymtab_end`用于指明finsh使用内存
+- FSymTab用于存放所有注册命令的结构体 `struct finsh_syscall`,包括命令名称,命令选项,命令描述,命令函数执行地址信息
 
 #### 3.1.1.2 宏
 
@@ -219,40 +219,40 @@ SORT(.dtors.*)会把所有以.dtors.开头的部分按照字母顺序排序。�
                 };
 ```
 
-1. 宏过载语法,选择2个参数使用`MSH_FUNCTION_CMD2`,`_MSH_FUNCTION_CMD2`的desc为0;3个参数使用`MSH_FUNCTION_CMD2_OPT`
-2.  定义字符串成员,地址定义为.rodata.name;内容为#cmd;
+1. 宏过载语法,选择2个参数使用 `MSH_FUNCTION_CMD2`,`_MSH_FUNCTION_CMD2`的desc为0;3个参数使用 `MSH_FUNCTION_CMD2_OPT`
+2. 定义字符串成员,地址定义为.rodata.name;内容为#cmd;
 
 ```c
 const char __fsym_##cmd##_name[] rt_section(".rodata.name") = #cmd;    \
 const char __fsym_##cmd##_desc[] rt_section(".rodata.name") = #desc;   \
 ```
 
-3. ` __fsym_##cmd `存储名称,细节,挂钩的函数指针地址
+3. `__fsym_##cmd`存储名称,细节,挂钩的函数指针地址
 
 ### 3.1.2遍历FINSH命令
 
-```c 
+```c
     for (index = _syscall_table_begin;
             index < _syscall_table_end;
             FINSH_NEXT_SYSCALL(index))
     {
-        
+  
     }
 ```
 
 ### 3.1.3TAB补全实现
 
-1. 判断输入为`/t`
-2. 将光标移动到行首;使用`/b`退格,一个个退回删除之前的显示字符
-3. 将命令首地址传入`shell_auto_complete`
+1. 判断输入为 `/t`
+2. 将光标移动到行首;使用 `/b`退格,一个个退回删除之前的显示字符
+3. 将命令首地址传入 `shell_auto_complete`
 4. 计算偏移地址
 
 - `shell_auto_complete`
 
-#### 3.1.3.1`msh_auto_complete`
+#### 3.1.3.1 `msh_auto_complete`
 
-1. 首地址为`/0`,即无输入任何字符串,直接TAB`/t`,则调用`msh_cmd`输出所有支持的命令
-2.  匹配命令名字,并输出命令
+1. 首地址为 `/0`,即无输入任何字符串,直接TAB `/t`,则调用 `msh_cmd`输出所有支持的命令
+2. 匹配命令名字,并输出命令
 
 ```c
         for (index = _syscall_table_begin; index < _syscall_table_end; FINSH_NEXT_SYSCALL(index))
@@ -278,9 +278,9 @@ const char __fsym_##cmd##_desc[] rt_section(".rodata.name") = #desc;   \
         }
 ```
 
-2. 输出提示字符`msh />`与命令输入的字符串
+2. 输出提示字符 `msh />`与命令输入的字符串
 
-```c 
+```c
  rt_kprintf("%s%s", FINSH_PROMPT, prefix);
 ```
 
@@ -293,9 +293,9 @@ finsh_prompt_custom 用于自定义替换默认提示
 finsh_set_prompt("artpi@root");
 ```
 
-#### 3.1.3.2`msh_opt_auto_complete`
+#### 3.1.3.2 `msh_opt_auto_complete`
 
-```c 
+```c
    argc = msh_get_argc(prefix, &opt_str);
     if (argc)
     {
@@ -308,10 +308,10 @@ finsh_set_prompt("artpi@root");
 ```
 
 1. `msh_get_argc` 获取命令空格之后参数
-2. 没获取到参数时,判断`prefix`不是一个已知的命令，并且命令行字符串的最后一个字符是空格
-3. `msh_get_cmd_opt`获取`syscall_table`中是否有匹配的命令
-4. `argc`为0,输出`msh_opt_help`所有的命令?
-5. `msh_opt_complete`与`msh_auto_complete`作用相同
+2. 没获取到参数时,判断 `prefix`不是一个已知的命令，并且命令行字符串的最后一个字符是空格
+3. `msh_get_cmd_opt`获取 `syscall_table`中是否有匹配的命令
+4. `argc`为0,输出 `msh_opt_help`所有的命令?
+5. `msh_opt_complete`与 `msh_auto_complete`作用相同
 
 ### 3.1.4 TAB 子选项自动补全
 
@@ -334,9 +334,9 @@ CMD_OPTIONS_NODE_END
 
 ## 3.2 SHELL
 
-###  3.2.1`finsh_system_init`分配finsh结构体使用内存
+### 3.2.1 `finsh_system_init`分配finsh结构体使用内存
 
-1. 创建`finsh_thread_entry`线程
+1. 创建 `finsh_thread_entry`线程
 2. 创建信号量,用于阻塞接字符串;信号量由控制台设备对象解除
 3. 设置提示模式
 4. INIT_APP_EXPORT中调用
@@ -344,14 +344,12 @@ CMD_OPTIONS_NODE_END
 ### 3.2.2 `finsh_thread_entry`
 
 1. 获取控制台设备对象
-
 2. 获取控制台密码用于密码确认
 
    - `finsh_wait_auth`
-     - 阻塞等待获取密码;密码输入显示`*`
+     - 阻塞等待获取密码;密码输入显示 `*`
      - 敲入回车认为密码输入完成
      - 进入密码验证判断;失败线程阻塞等待2S再次获取输入字符
-
 3. 进入控制台线程
 
    1. `finsh_getchar`
@@ -376,7 +374,6 @@ CMD_OPTIONS_NODE_END
    - tab键 补全命令
    - 删除键:删除
    - 回车键:执行msh命令
-
 4. 设置控制台设备模式
 
 ```c
@@ -424,9 +421,8 @@ void finsh_set_device(const char *device_name)
 
 ### 3.2.3 历史命令显示
 
-1. 回车存入历史命令`shell_push_history`
-
-2. 上下键显示历史命令`shell_handle_history`
+1. 回车存入历史命令 `shell_push_history`
+2. 上下键显示历史命令 `shell_handle_history`
 
 ### 3.2.4 MSH命令执行
 
@@ -451,11 +447,9 @@ void finsh_set_device(const char *device_name)
 #define rt_always_inline            static inline __attribute__((always_inline))
 ```
 
-- `__RT_STRINGIFY(x...)` 和 `RT_STRINGIFY(x...)`：这两个宏用于将参数转换为字符串。`__RT_STRINGIFY`直接将参数转换为字符串，而`RT_STRINGIFY`则通过`__RT_STRINGIFY`间接完成转换，以确保参数先被宏展开再转换为字符串。
-
+- `__RT_STRINGIFY(x...)` 和 `RT_STRINGIFY(x...)`：这两个宏用于将参数转换为字符串。`__RT_STRINGIFY`直接将参数转换为字符串，而 `RT_STRINGIFY`则通过 `__RT_STRINGIFY`间接完成转换，以确保参数先被宏展开再转换为字符串。
 - `rt_section(x)`：这个宏用于将特定的函数或变量放入指定的段(section)中。
-
-- `rt_noreturn`：这个宏用于指示函数不会返回。这对于像`exit()`或`abort()`这样的函数很有用。
+- `rt_noreturn`：这个宏用于指示函数不会返回。这对于像 `exit()`或 `abort()`这样的函数很有用。
 
   `rt_noreturn` 是一个函数属性，用于告诉编译器这个函数不会返回到调用者。这个属性可以帮助编译器进行优化。
 
@@ -463,13 +457,13 @@ void finsh_set_device(const char *device_name)
 
 ## void类型和rt_noreturn类型的区别
 
-`void`类型的函数和带有`rt_noreturn`属性的函数之间的主要区别在于它们的行为，而不仅仅是它们的返回值。
+`void`类型的函数和带有 `rt_noreturn`属性的函数之间的主要区别在于它们的行为，而不仅仅是它们的返回值。
 
-`void`类型的函数确实没有返回值，但这并不意味着它们不会返回到调用者。当`void`函数完成其工作后，控制权会返回到调用该函数的代码。
+`void`类型的函数确实没有返回值，但这并不意味着它们不会返回到调用者。当 `void`函数完成其工作后，控制权会返回到调用该函数的代码。
 
-然而，带有`rt_noreturn`属性的函数永远不会返回到调用者。这意味着一旦调用了这样的函数，程序的控制流就不会回到原来的位置。这对于像`exit()`或`abort()`这样的函数来说是非常有用的，因为这些函数在被调用后会终止程序的执行，或者跳转到其他的执行流程。
+然而，带有 `rt_noreturn`属性的函数永远不会返回到调用者。这意味着一旦调用了这样的函数，程序的控制流就不会回到原来的位置。这对于像 `exit()`或 `abort()`这样的函数来说是非常有用的，因为这些函数在被调用后会终止程序的执行，或者跳转到其他的执行流程。
 
-所以，`rt_noreturn`并不是关于函数的返回值的，而是关于函数是否会返回到调用者。这个属性可以帮助编译器进行更好的优化，因为编译器知道一旦调用了`rt_noreturn`函数，就不需要生成任何后续的代码。希望这个解释对你有所帮助！
+所以，`rt_noreturn`并不是关于函数的返回值的，而是关于函数是否会返回到调用者。这个属性可以帮助编译器进行更好的优化，因为编译器知道一旦调用了 `rt_noreturn`函数，就不需要生成任何后续的代码。希望这个解释对你有所帮助！
 
 # 6.map文件分析
 
@@ -499,7 +493,7 @@ rt_memcpy                                0x900003e9   Thumb Code     0  rt_memcp
 Reset_Handler                            0x9000060d   Thumb Code     8  startup_stm32h750xx.o(.text)
 ```
 
-1. Reset_Handler 根据链接脚本设置`ENTRY(Reset_Handler)`;应为RAM首地址位置;实际并不是
+1. Reset_Handler 根据链接脚本设置 `ENTRY(Reset_Handler)`;应为RAM首地址位置;实际并不是
 
 原因:
 
@@ -516,7 +510,7 @@ __Vectors       DCD     __initial_sp                      ; Top of Stack
     DCD     Reset_Handler                     ; Reset Handler
 ```
 
-- `Reset_Handler `编写中调用`SystemInit`与`__main`
+- `Reset_Handler `编写中调用 `SystemInit`与 `__main`
 
 ```assembly
 Reset_Handler    PROC
@@ -546,7 +540,6 @@ https://zhuanlan.zhihu.com/p/98888285
 ### 7.1.2 LR链接寄存器
 
 - LR链接寄存器：在ARM架构中，链接寄存器（Link Register，简称LR）通常用于存储子程序返回地址。当执行BL（带返回的跳转指令）或BLX（带返回和状态切换的跳转指令）时，处理器会将下一条指令的地址保存到LR中。然后，当子程序执行完毕后，可以通过将LR的内容加载到程序计数器（PC）中，从而返回到调用者。这种机制使得子程序的调用和返回变得非常方便和高效。
-
 - 在用户模式下，LR（或R14）用作链接寄存器，用于存储子程序调用时的返回地址。如果返回地址存储在堆栈上，它也可以用作通用寄存器。
 
   在异常处理模式中，LR 保存异常的返回地址，或者如果在异常内执行子例程调用，则保存子例程返回地址。如果返回地址存储在堆栈中，LR 可以用作通用寄存器。
@@ -589,8 +582,6 @@ rt_hw_interrupt_enable:
 
 https://club.rt-thread.org/ask/question/d5156cdf3abb63a1.html
 
-
-
 # 8.RTT系统初始化
 
 ## 8.1 `rtthread_startup`
@@ -603,9 +594,79 @@ https://club.rt-thread.org/ask/question/d5156cdf3abb63a1.html
 1. I/D cache初始化
 2. 时钟初始化
 3. 外设时钟初始化
-4. 堆初始化`rt_system_heap_init`
+4. 堆初始化 `rt_system_heap_init`
+5. 组件初始化 `rt_components_board_init`,初始化板级驱动
 
-5. 组件初始化`rt_components_board_init`
+## 8.3 INIT_EXPORT
+
+```c
+/*
+ * Components Initialization will initialize some driver and components as following
+ * order:
+ * rti_start         --> 0
+ * BOARD_EXPORT      --> 1
+ * rti_board_end     --> 1.end
+ *
+ * DEVICE_EXPORT     --> 2
+ * COMPONENT_EXPORT  --> 3
+ * FS_EXPORT         --> 4
+ * ENV_EXPORT        --> 5
+ * APP_EXPORT        --> 6
+ *
+ * rti_end           --> 6.end
+ *
+ * These automatically initialization, the driver or component initial function must
+ * be defined with:
+ * INIT_BOARD_EXPORT(fn);
+ * INIT_DEVICE_EXPORT(fn);
+ * ...
+ * INIT_APP_EXPORT(fn);
+ * etc.
+ */
+```
+
+1. 根据编译后 `Image Symbol Table`中顺序执行
+
+```c
+   	__rt_init_rti_start                      0x900621a4   Data           4  components.o(.rti_fn.0)
+    __rt_init_rti_board_start                0x900621a8   Data           4  components.o(.rti_fn.0.end)
+    __rt_init_vtor_config                    0x900621ac   Data           4  board.o(.rti_fn.1)
+    __rt_init_mpu_init                       0x900621b0   Data           4  drv_mpu.o(.rti_fn.1)
+    __rt_init_rt_hw_spi_init                 0x900621b4   Data           4  drv_spi.o(.rti_fn.1)
+    __rt_init_SDRAM_Init                     0x900621b8   Data           4  drv_sdram.o(.rti_fn.1)
+    __rt_init_rt_wdt_init                    0x900621bc   Data           4  drv_wdt.o(.rti_fn.1)
+    __rt_init_rt_usbd_class_list_init        0x900621c0   Data           4  usbdevice.o(.rti_fn.1)
+    __rt_init_ulog_init                      0x900621c4   Data           4  ulog.o(.rti_fn.1)
+    __rt_init_rti_board_end                  0x900621c8   Data           4  components.o(.rti_fn.1.end)
+    __rt_init_rt_mmcsd_core_init             0x900621cc   Data           4  mmcsd_core.o(.rti_fn.2)
+    __rt_init_dfs_init                       0x900621d0   Data           4  dfs.o(.rti_fn.2)
+    __rt_init_rt_usbd_msc_class_register     0x900621d4   Data           4  mstorage.o(.rti_fn.2)
+    __rt_init_ulog_console_backend_init      0x900621d8   Data           4  console_be.o(.rti_fn.2)
+    __rt_init_ulog_async_init                0x900621dc   Data           4  ulog.o(.rti_fn.2)
+    __rt_init_ulog_console_backend_filter_init 0x900621e0   Data           4  ulog_file_be.o(.rti_fn.3)
+    __rt_init_adc_init                       0x900621e4   Data           4  user_adc.o(.rti_fn.3)
+    __rt_init_rt_cm_backtrace_init           0x900621e8   Data           4  cmb_port.o(.rti_fn.3)
+    __rt_init_stm_usbd_register              0x900621ec   Data           4  drv_usbd.o(.rti_fn.3)
+    __rt_init_rt_hw_sdio_init                0x900621f0   Data           4  drv_sdmmc.o(.rti_fn.3)
+    __rt_init_rt_hw_rtc_init                 0x900621f4   Data           4  drv_rtc.o(.rti_fn.3)
+    __rt_init_set_finsh_irq                  0x900621f8   Data           4  board.o(.rti_fn.4)
+    __rt_init_rtc_update_init                0x900621fc   Data           4  board.o(.rti_fn.4)
+    __rt_init_elm_init                       0x90062200   Data           4  dfs_elm.o(.rti_fn.4)
+    __rt_init_dfs_romfs_init                 0x90062204   Data           4  dfs_romfs.o(.rti_fn.4)
+    __rt_init_dfs_lfs_init                   0x90062208   Data           4  dfs_lfs.o(.rti_fn.4)
+    __rt_init_syswatch_init                  0x9006220c   Data           4  syswatch.o(.rti_fn.4)
+    __rt_init_utest_init                     0x90062210   Data           4  utest.o(.rti_fn.4)
+    __rt_init_rt_flash_init                  0x90062214   Data           4  spi_flash_init.o(.rti_fn.5)
+    __rt_init_mfbd_init                      0x90062218   Data           4  bsp_key.o(.rti_fn.6)
+    __rt_init_User_Led_Init                  0x9006221c   Data           4  user_led.o(.rti_fn.6)
+    __rt_init_pvd_init                       0x90062220   Data           4  board.o(.rti_fn.6)
+    __rt_init_uart1_init                     0x90062224   Data           4  user_uart1.o(.rti_fn.6)
+    __rt_init_cpu_usage_init                 0x90062228   Data           4  cpu_usage.o(.rti_fn.6)
+    __rt_init_finsh_system_init              0x9006222c   Data           4  shell.o(.rti_fn.6)
+    __rt_init_rti_end                        0x90062230   Data           4  components.o(.rti_fn.6.end)
+```
+
+## 8.4 rt_system_timer_init
 
 # 9. 内存管理
 
@@ -618,7 +679,7 @@ https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/p
 - 对堆开始地址与结束地址进行内存对齐
 - 在ART-PI中将所有剩余ROM划分给堆使用
 - 断言堆设置是否正常
-- 根据配置的内存策略 使用`_MEM_INIT`
+- 根据配置的内存策略 使用 `_MEM_INIT`
 - 初始化多线程争用锁
 
 ## 9.2 小内存管理算法
@@ -643,7 +704,7 @@ https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/p
 ### 9.2.1 `rt_smem_init`
 
 1. 内存对齐
-2. 内存大小计算;至少需要满足两个`struct rt_small_mem_item`结构体;因为堆起始与结束各有一个结构体
+2. 内存大小计算;至少需要满足两个 `struct rt_small_mem_item`结构体;因为堆起始与结束各有一个结构体
 
 ```c
 /* 初始化堆起始位置内存对象*/
@@ -674,7 +735,7 @@ rt_smem_setname(small_mem->heap_end, "INIT");
 
 ### 9.2.2 alloc分配
 
-- 使用_MEM_MALLOC,操作`system_heap`
+- 使用_MEM_MALLOC,操作 `system_heap`
 
 ```c
 rt_size_t ptr;
@@ -749,7 +810,7 @@ if (mem->next - (ptr + SIZEOF_STRUCT_MEM) >=
     mem2->next = mem->next;//mem2指向堆末尾
     mem2->prev = ptr;//上一个指向堆起始
     mem->next = ptr2;//堆起始的下一个更新为mem2
-    
+  
     /* 如果新的空闲内存块不是最后一个内存块，那么更新下一个内存块的prev指针，使其指向新的空闲内存块 */
     if (mem2->next != small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM)
     {
@@ -799,7 +860,6 @@ if (newsize + SIZEOF_STRUCT_MEM + MIN_SIZE < size)//当前内存块大小满足�
 ### 9.2.4 plug_holes
 
 - 处理内存碎片的。它试图通过合并相邻的未使用的内存块（称为“空洞”）来减少内存碎片。这个过程被称为“填充空洞”
-
 - 获取前一个内存项,尝试合并;获取后一个尝试合并
 
 ### 9.2.5 free
@@ -810,7 +870,7 @@ if (newsize + SIZEOF_STRUCT_MEM + MIN_SIZE < size)//当前内存块大小满足�
 
 ## 9.3 slab 管理算法
 
--  slab 内存管理算法则主要是在系统资源比较丰富时，提供了一种近似多内存池管理算法的快速算法
+- slab 内存管理算法则主要是在系统资源比较丰富时，提供了一种近似多内存池管理算法的快速算法
 
 ```
 Linux目前为其“slab”分配器提供了三种选择:
@@ -828,7 +888,6 @@ SLOB (Simple List Of Blocks)是一种内存分配器，针对内存非常少的�
   前面两篇已经把第1，2种算法看了，现在就来看看第三种算法，第三种算法主要是针对大内存使用的。第二种，小内存算法在分配内存的时候，随着内存碎片的增多，分配速度会越来越慢，当总的内存太大的时候，内存碎片的数量可能会更多，此时这种算法就会变得不再适用。
 
   SLAB在我看来就是前两种算法的融合。
-
 - https://club.rt-thread.org/ask/question/438bfc8cfd626cc2.html
 
 ```c
@@ -870,10 +929,10 @@ struct rt_slab_page
 ### 9.3.1 初始化
 
 - page初始化,按页释放内存
+
   - 开始地址的page写入所有内存的页数
   - 下一个指向页对象为NULL
   - slab->page_list指向开始地址
-
 - 计算zone大小:zone翻倍 比 最小数量 /1024小,则翻倍zone
 
 ```c
@@ -977,7 +1036,7 @@ void rt_slab_page_free(rt_slab_t m, void *addr, rt_size_t npages)
 
 - 直接处理大量分配 ,直接分配
 
-#### 9.3.5.2小内存 
+#### 9.3.5.2小内存
 
 ```c
 /*
@@ -1023,10 +1082,8 @@ rt_inline int zoneindex(rt_size_t *bytes)
 
 1. 该zone没有被使用过
 
-   - 从页面分配一个区域,设置内存信息`memusage`的类型与索引,设置zone空间信息
-
+   - 从页面分配一个区域,设置内存信息 `memusage`的类型与索引,设置zone空间信息
    - 计算块地址,链接到zone数组中
-
 2. 该zone被使用过
 
    - 直接分配,从zone_free中移除
@@ -1034,13 +1091,10 @@ rt_inline int zoneindex(rt_size_t *bytes)
 ##### 9.3.5.3 有zone数组
 
 1. 分配完了,从zone数组中移除
-
 2. 可分配,执行分配
-
 3. 没有可分配空间
 
    - 在空闲块列表中查找(free的时候分配)
-
    - 从空闲块列表中删除此块
 
 ### 9.3.6 free
@@ -1056,11 +1110,29 @@ rt_inline int zoneindex(rt_size_t *bytes)
 - 如果zone释放后可以提供分配了,添加回zone数组中
 - 如果该区域完全空闲，并且我们可以从其他区域进行分配，则将该区域移到FreeZones列表中
   - **空闲区域计数和释放**：每当一个区域被移动到空闲区域列表中，空闲区域的计数（`slab->zone_free_cnt`）就会增加。如果空闲区域的数量超过了设定的阈值（`ZONE_RELEASE_THRESH`），那么就会释放一个区域到页面分配器。
-  - **页面的释放**：在释放区域到页面分配器之前，会设置每个页面的使用情况（`kup->type = PAGE_TYPE_FREE; kup->size = 0;`）。然后，调用`rt_slab_page_free()`函数来释放这些页面。
+  - **页面的释放**：在释放区域到页面分配器之前，会设置每个页面的使用情况（`kup->type = PAGE_TYPE_FREE; kup->size = 0;`）。然后，调用 `rt_slab_page_free()`函数来释放这些页面。
 
 ## 9.4 memheap 管理算法
 
 - memheap 方法适用于系统存在多个内存堆的情况，它可以将多个内存 “粘贴” 在一起，形成一个大的内存堆，用户使用起来会非常方便
+
+### 9.4.1 init
+
+- 计算可用大小
+- 设置信息
+- 设置链表
+
+### 9.4.2 alloc
+
+- 可用分配
+- 从链表中寻找可分配的内存
+  1. 寻找到可分配的内存,分割进行分配
+  2. 找不到;继续从最后一个内存往后分配
+
+### 9.4.3 free
+
+- 释放
+- 查找是否可以与临近的内存合并,进行合并
 
 ## 9.5 malloc&&realloc分配
 
@@ -1068,3 +1140,204 @@ rt_inline int zoneindex(rt_size_t *bytes)
 2. _MEM_MALLOC 调用不同内存算法的malloc
 3. 解锁
 4. 调用malloc call函数
+
+# 10. 系统定时器
+
+## 10.1 跳跃表
+
+- 跳跃表是一种“随机”的数据结构，在很大的可能性下，它会得到O(log(N))的时间复杂度，而旧的列表得到O(N)。此外，当将RT_TIMER_SKIP_LIST_LEVEL设置为1时，它将与旧的双链表相同，无论是时间还是空间复杂性。基准测试表明，当RT_TIMER_SKIP_LIST_LEVEL为3时，当有100个计时器时，随机插入新计时器的平均时间比旧计时器快2倍，当有200个计时器时快3倍。但是，它恢复已弃用的函数rt_system_timer_init。bsp必须在系统启动时调用它。
+
+#### [定时器跳表 (Skip List) 算法](https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/programming-manual/timer/timer?id=定时器跳表-skip-list-算法)
+
+在前面介绍定时器的工作方式的时候说过，系统新创建并激活的定时器都会按照以超时时间排序的方式插入到 rt_timer_list 链表中，也就是说 t_timer_list 链表是一个有序链表，RT-Thread 中使用了跳表算法来加快搜索链表元素的速度。
+
+跳表是一种基于并联链表的数据结构，实现简单，插入、删除、查找的时间复杂度均为 O(log n)。跳表是链表的一种，但它在链表的基础上增加了 “跳跃” 功能，正是这个功能，使得在查找元素时，跳表能够提供 O(log n)的时间复杂度，举例如下：
+
+一个有序的链表，如下图所示，从该有序链表中搜索元素 {13, 39}，需要比较的次数分别为 {3, 5}，总共比较的次数为 3 + 5 = 8 次。
+
+![有序链表示意图](https://www.rt-thread.org/document/site/rt-thread-version/rt-thread-standard/programming-manual/timer/figures/05timer_skip_list.png)
+
+使用跳表算法后可以采用类似二叉搜索树的方法，把一些节点提取出来作为索引，得到如下图所示的结构：
+
+![有序链表索引示意图](https://www.rt-thread.org/document/site/rt-thread-version/rt-thread-standard/programming-manual/timer/figures/05timer_skip_list2.png)
+
+在这个结构里把 {3, 18,77} 提取出来作为一级索引，这样搜索的时候就可以减少比较次数了, 例如在搜索 39 时仅比较了 3 次（通过比较 3，18，39)。当然我们还可以再从一级索引提取一些元素出来，作为二级索引，这样更能加快元素搜索。
+
+![三层跳表示意图](https://www.rt-thread.org/document/site/rt-thread-version/rt-thread-standard/programming-manual/timer/figures/05timer_skip_list3.png)
+
+所以，定时器跳表可以通过上层的索引，在搜索的时候就减少比较次数，提升查找的效率，这是一种通过 “空间来换取时间” 的算法，在 RT-Thread 中通过宏定义 RT_TIMER_SKIP_LIST_LEVEL 来配置跳表的层数，默认为 1，表示采用一级有序链表图的有序链表算法，每增加一，表示在原链表基础上增加一级索引。
+
+## 10.2 硬件定时器
+
+- HARD_TIMER 模式的定时器超时函数在中断上下文环境中执行，可以在初始化 / 创建定时器时使用参数 RT_TIMER_FLAG_HARD_TIMER 来指定。
+
+  在中断上下文环境中执行时，对于超时函数的要求与中断服务例程的要求相同：执行时间应该尽量短，执行时不应导致当前上下文挂起、等待。例如在中断上下文中执行的超时函数它不应该试图去申请动态内存、释放动态内存等。
+
+  RT-Thread 定时器默认的方式是 HARD_TIMER 模式，即定时器超时后，超时函数是在系统时钟中断的上下文环境中运行的。在中断上下文中的执行方式决定了定时器的超时函数不应该调用任何会让当前上下文挂起的系统函数；也不能够执行非常长的时间，否则会导致其他中断的响应时间加长或抢占了其他线程执行的时间。
+
+### 10.2.1 初始化&&删除
+
+- 初始化
+
+  - 动态分配,malloc定时器结构体 || 静态分配,外部分配
+  - 设置相关参数
+  - init tick;timeout = 0;
+  - 初始化跳跃表链表
+- 删除
+
+  - 移除跳跃表链表
+  - 从系统移除该对象
+
+### 10.2.2 start
+
+- 获取链表
+
+#### 10.2.2.1 线程定时器
+
+- 调度上锁
+- 从定时器计算线程结构体地址
+- 标识线程定时器启动
+- 调度解锁
+
+#### 10.2.2.2 定时器开始处理
+
+- 当前正在执行超时处理函数,退出;(超时函数执行后会再次运行开始函数)
+- 移除跳跃表定时器
+- 定时器状移除激活状态
+- 计算超时tick
+- 提取跳表索引到_timer_list中
+
+```c
+row_head[0]  = &timer_list[0];
+//遍历每一层的定时器列表
+for (row_lvl = 0; row_lvl < RT_TIMER_SKIP_LIST_LEVEL; row_lvl++)
+{
+    //当前层中，遍历定时器列表，直到 row_head 指向当前层的最后一个定时器。
+    for (; row_head[row_lvl] != timer_list[row_lvl].prev;
+         row_head[row_lvl]  = row_head[row_lvl]->next)
+    {
+        struct rt_timer *t;
+        rt_list_t *p = row_head[row_lvl]->next;
+
+        /* 获取当前节点定时器的指针，并将其转换为 rt_timer 结构体类型。 */
+        t = rt_list_entry(p, struct rt_timer, row[row_lvl]);
+
+        //如果我们有两个定时器同时超时，最好是先插入的定时器被提前调用。因此，将新的计时器插入到some-timeout计时器列表的末尾。
+        //当前节点定时器的超时时间和需要开启的定时器超时时间相同，继续遍历。
+        if ((t->timeout_tick - timer->timeout_tick) == 0)
+        {
+            continue;
+        }
+        //如果当前节点定时器比需要开启的定时器超时时间还长,退出
+        else if ((t->timeout_tick - timer->timeout_tick) < RT_TICK_MAX / 2)
+        {
+            break;
+        }
+    }
+    //将提取的索引更新至_timer_list中
+    if (row_lvl != RT_TIMER_SKIP_LIST_LEVEL - 1)
+        row_head[row_lvl + 1] = row_head[row_lvl] + 1;
+
+	/*这个简单的计数器可以很好地均匀分布列表高度。通过使用tst_nr的最低有效位，它确保定时器被插入到不同的级别，从而实现平衡分布。目标是避免具有相似超时节拍的计时器聚类*/
+    //每次插入定时器时，计数器会递增。这个计数器的作用是在跳表中决定新的定时器节点应该插入到哪一层。
+    random_nr++;
+    tst_nr = random_nr;
+	//将新的定时器节点插入到系统定时器列表的最后一层
+    rt_list_insert_after(row_head[RT_TIMER_SKIP_LIST_LEVEL - 1],
+                         &(timer->row[RT_TIMER_SKIP_LIST_LEVEL - 1]));
+    //从第二层开始，遍历每一层的定时器列表。
+    for (row_lvl = 2; row_lvl <= RT_TIMER_SKIP_LIST_LEVEL; row_lvl++)
+    {
+        //在相应级别的节点后插入计时器。 
+        //RT_TIMER_SKIP_LIST_MASK = 3;1~3 ,5~7,9~11这样添加
+        if (!(tst_nr & RT_TIMER_SKIP_LIST_MASK))
+            rt_list_insert_after(row_head[RT_TIMER_SKIP_LIST_LEVEL - row_lvl],
+                                 &(timer->row[RT_TIMER_SKIP_LIST_LEVEL - row_lvl]));
+        else
+            break;
+        //tst_nr右移以测试下一位
+        tst_nr >>= (RT_TIMER_SKIP_LIST_MASK + 1) >> 1;
+    }
+}
+```
+
+### 10.2.3 删除定时器&&STOP
+
+- 从定时器链表中剔除
+- 从object对象中剔除
+
+## 10.2 软件定时器
+
+### 10.2.1 系统定时器线程
+
+1. 初始化跳表链表
+2. 信号量初始化,挂起线程按优先级排队恢复
+3. 线程初始化并启动,优先级4,时间片10;(FREERTOS的时间片长度不可设置,1个时间片执行一次切换)
+
+#### 10.2.1.1 _timer_thread_entry
+
+1. 进入前设置信号量最大获取次数为1,二值信号量
+2. 进入后 : 获取最近的超时时间
+   - 当前定时器链表为空,说明没有定时器启动; -> 信号量阻塞该线程,直到定时器启动释放信号量
+   - 不为空则返回最近的超时时间
+3. 获取当前tick
+4. 计算下一次定时器到达超时时间,使用信号量阻塞到该时间
+5. 阻塞结束后执行超时检测
+
+### 10.2.3软件定时器启动
+
+1.  信号量在启动时释放;
+2. 目的:如果定时器线程发现当前没有正在执行的定时器链表,则会进入RT_WAITING_FOREVER阻塞状态;
+3. 此处释放信号量用于释放定时器线程,计算下一个唤醒时间
+
+## 10.3 rt_timer_check 定时器链表检测
+
+- systick irq中调用
+
+1. 获取当前tick
+
+```c
+rt_list_init(&list);//初始化链表
+//最底层跳表不为空
+while (!rt_list_isempty(&_timer_list[RT_TIMER_SKIP_LIST_LEVEL - 1]))
+{
+    //获取定时器结构体
+    t = rt_list_entry(_timer_list[RT_TIMER_SKIP_LIST_LEVEL - 1].next,
+                      struct rt_timer, row[RT_TIMER_SKIP_LIST_LEVEL - 1]);
+
+    //由于tick中断应该是很快进入的,所以判断超时时间<RT_TICK_MAX既可
+    if ((current_tick - t->timeout_tick) < RT_TICK_MAX / 2)
+    {
+        //从计时器列表中删除计时器
+        _timer_remove(t);
+
+        t->parent.flag |= RT_TIMER_FLAG_PROCESSING;
+        //将计时器添加到临时列表
+        rt_list_insert_after(&list, &(t->row[RT_TIMER_SKIP_LIST_LEVEL - 1]));
+        /* call timeout function */
+        t->timeout_func(t->parameter);
+
+        /* re-get tick */
+        current_tick = rt_tick_get();
+
+        t->parent.flag &= ~RT_TIMER_FLAG_PROCESSING;
+
+        //检查定时器对象是否被分离或重新启动
+        //由于没有屏蔽中断,可能在执行过程中,其他中断停止该定时器;如果不直接退出,t的指向将会出问题
+        if (rt_list_isempty(&list))
+        {
+            continue;
+        }
+        rt_list_remove(&(t->row[RT_TIMER_SKIP_LIST_LEVEL - 1]));
+        if ((t->parent.flag & RT_TIMER_FLAG_PERIODIC) &&
+            (t->parent.flag & RT_TIMER_FLAG_ACTIVATED))
+        {
+            /* start it */
+            t->parent.flag &= ~RT_TIMER_FLAG_ACTIVATED;
+            _timer_start(_timer_list, t);
+        }
+    }
+    else break;
+}
+```
+
