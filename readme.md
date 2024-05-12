@@ -1341,3 +1341,59 @@ while (!rt_list_isempty(&_timer_list[RT_TIMER_SKIP_LIST_LEVEL - 1]))
 }
 ```
 
+# 11 scheduler
+
+## 11.1 初始化
+
+1. 根据支持的最大优先级,初始化不同的链表
+
+```c
+for (offset = 0; offset < RT_THREAD_PRIORITY_MAX; offset ++)
+{
+    rt_list_init(&rt_thread_priority_table[offset]);
+}
+```
+
+2. 初始化就绪优先级组
+3. 优先级>32, 初始化线程就绪表
+
+## 11.2 位图
+
+- 软件实现
+
+[RT-Thread的位图调度算法分析](https://www.cnblogs.com/shirleyxu/p/9468080.html)
+
+[一种新的高效的寻找字节最低非0位的有效算法](https://eureka1024.blog.csdn.net/article/details/120277910)
+
+- 硬件实现
+
+```assembly
+__asm int __rt_ffs(int value)
+{
+    CMP     r0, #0x00     // 比较寄存器r0和0，设置条件标志
+    BEQ     exit          // 如果r0等于0（即输入值为0），则跳转到exit标签
+
+    RBIT    r0, r0        // 反转r0中的位，最低位变为最高位，最高位变为最低位
+    CLZ     r0, r0        // 计算r0中前导零的数量
+    ADDS    r0, r0, #0x01 // 将前导零的数量加1，因为位位置从1开始计数
+
+exit
+    BX      lr            // 返回到调用者
+}
+```
+
+## 11.3 插入线程
+
+![image-20240512142100156](readme.assets/image-20240512142100156.png)
+
+
+
+## 11.4 启动
+
+1. 调度程序获取最高优先级线程`_scheduler_get_highest_priority_thread`
+
+- 注意到`rt_thread_ready_priority_group`在初始化时置0
+- 线程创建启动后,将会把`rt_thread_ready_priority_group`置位,用于更快确认系统使用了什么优先级任务
+
+例如必须创建的空闲线程,其线程优先级为``RT_THREAD_PRIORITY_MAX - 1`
+
