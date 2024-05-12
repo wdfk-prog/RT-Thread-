@@ -1341,3 +1341,42 @@ while (!rt_list_isempty(&_timer_list[RT_TIMER_SKIP_LIST_LEVEL - 1]))
 }
 ```
 
+## 10. 3 其他定时器管理算法
+
+https://zhuanlan.zhihu.com/p/549450132
+
+```c
+有序链表：插入O(n)，删除O(1)，过期expire执行O(1)
+
+最小堆：插入O(logn)，删除O(logn)，过期expire执行O(1)
+
+红黑树：插入O(logn)，删除O(logn)，过期expire执行O(logn)
+
+哈希表+链表（时间轮）：插入O(1)，删除O(1)，过期expire平均执行O(1)（最坏为O(n)）
+```
+
+### 10.3.1 红黑树定时器
+
+Nginx 定时器 :https://blog.csdn.net/dearQiHao/article/details/102878306
+
+- 红黑树与AVL(二叉平衡树)	红黑树比 AVL 树具体更高效在哪里？
+
+因为**红黑树利用了缓存。**
+
+Robert Sedgewick, 红黑树的发明人，在《算法（第4版）》 中说过， 红黑树等价于2-3树。
+
+![img](https://pic1.zhimg.com/80/v2-69b3b29ad054b4dda28751ecdacb13bd_720w.webp?source=1def8aca)
+
+其中2-节点 等价于普通平衡二叉树的节点，**3-节点 本质上是非平衡性的缓存**。
+
+当需要再平衡（rebalance）时，增删操作时，2-节点 与 3-节点间 的 转化会吸收不平衡性，减少旋转次数，使再平衡尽快结束。
+
+**在综合条件下，增删操作相当时，数据的随机性强时，3-节点的非平衡性缓冲效果越明显。因此红黑树的综合性能更优。**
+
+继续追根溯源，红黑树的性能优势，**本质上是用空间换时间。**
+
+# 11 数据结构
+
+- [二叉搜索树、B树、B+树、AVL树、红黑树](https://zhuanlan.zhihu.com/p/355242138)
+- [树堆（Treap）和红黑树（RB-Tree）各有哪些优劣？](https://www.zhihu.com/question/27840936)
+
