@@ -1386,9 +1386,22 @@ exit
 
 ![image-20240512142100156](readme.assets/image-20240512142100156.png)
 
+1. 插入的线程时间片用完或者发生了让步(`YIELD`),证明该线程需要优先执行,将其插入到链表头部;
+2. 否则,还是时间片未走完,将其插入到链表尾部;
+3. `rt_thread_ready_priority_group`置位,用于更快确认系统使用了什么优先级任务
 
+## 11.4 删除线程
 
-## 11.4 启动
+1. 从链表中删除线程
+2. 判断该优先级任务链表是否为空,为空则清除`rt_thread_ready_priority_group`中的相关置位标志.
+
+## 11.5 线程启动
+
+1. 线程状态设置为`RT_THREAD_SUSPEND`
+
+2.`number_mask = 1L << RT_SCHED_PRIV(thread).current_priority;`
+
+## 11.6 系统启动
 
 1. 调度程序获取最高优先级线程`_scheduler_get_highest_priority_thread`
 
@@ -1396,4 +1409,12 @@ exit
 - 线程创建启动后,将会把`rt_thread_ready_priority_group`置位,用于更快确认系统使用了什么优先级任务
 
 例如必须创建的空闲线程,其线程优先级为``RT_THREAD_PRIORITY_MAX - 1`
+
+2. 获得最高优先级的第一个线程作为`current_thread`, 从就绪列表中删除该线程,切换线程状态为`RT_THREAD_RUNNING`
+- 为什么要删除当前线程?
+将线程从就绪队列中移除。这是因为，当线程被调度并开始运行时，它就不再处于就绪状态，因此需要从就绪队列中移除。当线程完成其任务或者被阻塞时，它会再次被添加到就绪队列中，等待下一次的调度。这种设计可以确保就绪队列中始终只包含那些实际上处于就绪状态的线程，从而提高调度的效率和准确性。
+
+3. 执行线程切换`rt_hw_context_switch_to`
+
+## 11.6 线程切换
 
