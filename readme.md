@@ -540,19 +540,35 @@ https://zhuanlan.zhihu.com/p/98888285
 ### 7.1.2 LR链接寄存器
 
 - LR链接寄存器：在ARM架构中，链接寄存器（Link Register，简称LR）通常用于存储子程序返回地址。当执行BL（带返回的跳转指令）或BLX（带返回和状态切换的跳转指令）时，处理器会将下一条指令的地址保存到LR中。然后，当子程序执行完毕后，可以通过将LR的内容加载到程序计数器（PC）中，从而返回到调用者。这种机制使得子程序的调用和返回变得非常方便和高效。
+
 - 在用户模式下，LR（或R14）用作链接寄存器，用于存储子程序调用时的返回地址。如果返回地址存储在堆栈上，它也可以用作通用寄存器。
 
   在异常处理模式中，LR 保存异常的返回地址，或者如果在异常内执行子例程调用，则保存子例程返回地址。如果返回地址存储在堆栈中，LR 可以用作通用寄存器。
 
-## 7.1.3 MSR
+### 7.1.4 []的作用
 
-- [**MSR指令**](https://zhuanlan.zhihu.com/p/333926905)[1](https://zhuanlan.zhihu.com/p/333926905)[2](https://blog.csdn.net/wavemcu/article/details/6737302)[3](https://blog.csdn.net/qq_43418840/article/details/121407337)[4](https://www.cnblogs.com/lifexy/p/7101686.html)：在ARM汇编语言中，MSR（Move to Status Register）指令用于将操作数的内容传送到程序状态寄存器的特定域中。其中，操作数可以为通用寄存器或立即数。MSR指令通常用于恢复或改变程序状态寄存器的内容。例如，当需要修改状态寄存器的内容时，可以通过“读取-修改-写回”指令序列完成。这种操作通常用于切换处理器模式、或者允许/禁止IRQ/FIQ中断等。
+- 在这段ARM汇编代码中，LDR r3, [r2] 是一条加载指令。这条指令的作用是从内存中加载数据。
 
-## 7.1.4 PRIMASK寄存器
+- r3 和 r2 是寄存器，它们是CPU中用于临时存储数据的小存储区。在这个上下文中，r3 和 r2 只是寄存器的名称，它们没有特殊的含义，只是用于标识这些寄存器。
+  [r2] 的含义是：使用 r2 寄存器中的值作为内存地址，从该地址加载数据。[] 的作用是表示间接寻址，也就是说，我们不是直接使用 r2 的值，而是使用 r2 中的值作为一个内存地址，从这个地址中获取数据。
+  所以，LDR r3, [r2] 的整体含义是：从内存中的 r2 所指向的地址加载数据，然后将这些数据存储到 r3 寄存器中。这就是这条指令的作用。
 
-- [**PRIMASK寄存器**](https://zhuanlan.zhihu.com/p/333926905)[5](https://blog.csdn.net/qhdd123/article/details/107207282)[6](https://blog.csdn.net/weixin_55672545/article/details/130453893)[7](https://bing.com/search?q=PRIMASK+寄存器作用及原理)：在ARM Cortex-M处理器中，PRIMASK寄存器用于控制中断的优先级，允许屏蔽（禁止）特定优先级的中断。PRIMASK寄存器是一个单比特（bit）的寄存器，只有两个有效的取值：0和1。当PRIMASK寄存器的值为0时，表示所有中断都可以触发。当PRIMASK寄存器的值为1时，会禁止所有可屏蔽的中断。这意味着通过设置 PRIMASK 寄存器为 1，可以禁用所有中断，从而实现临界区的保护或者实现禁止中断的功能。
+### 7.1.4 简单的指令
+- LDR: 将地址加载到寄存器中。
+- CMP: 比较两个操作数的值。
+- BEQ
 
-## 7.2.中断启用禁用
+
+
+## 7.2 MSR
+
+- [**MSR指令**](https://zhuanlan.zhihu.com/p/333926905)[[1]](https://zhuanlan.zhihu.com/p/333926905)[[2]](https://blog.csdn.net/wavemcu/article/details/6737302)[[3]](https://blog.csdn.net/qq_43418840/article/details/121407337)[[4]](https://www.cnblogs.com/lifexy/p/7101686.html)：在ARM汇编语言中，MSR（Move to Status Register）指令用于将操作数的内容传送到程序状态寄存器的特定域中。其中，操作数可以为通用寄存器或立即数。MSR指令通常用于恢复或改变程序状态寄存器的内容。例如，当需要修改状态寄存器的内容时，可以通过“读取-修改-写回”指令序列完成。这种操作通常用于切换处理器模式、或者允许/禁止IRQ/FIQ中断等。
+
+## 7.3 PRIMASK寄存器
+
+- [**PRIMASK寄存器**](https://zhuanlan.zhihu.com/p/333926905)[[5]](https://blog.csdn.net/qhdd123/article/details/107207282)[[6]](https://blog.csdn.net/weixin_55672545/article/details/130453893)[[7]](https://bing.com/search?q=PRIMASK+寄存器作用及原理)：在ARM Cortex-M处理器中，PRIMASK寄存器用于控制中断的优先级，允许屏蔽（禁止）特定优先级的中断。PRIMASK寄存器是一个单比特（bit）的寄存器，只有两个有效的取值：0和1。当PRIMASK寄存器的值为0时，表示所有中断都可以触发。当PRIMASK寄存器的值为1时，会禁止所有可屏蔽的中断。这意味着通过设置 PRIMASK 寄存器为 1，可以禁用所有中断，从而实现临界区的保护或者实现禁止中断的功能。
+
+## 7.4.中断启用禁用
 
 ```assembly
 /*
@@ -581,6 +597,44 @@ rt_hw_interrupt_enable:
 - 由于将PRIMASK的值暂存在r0中，执行临界段代码时r0值会不会改变？
 
 https://club.rt-thread.org/ask/question/d5156cdf3abb63a1.html
+
+## 7.3 HardFault_Handler
+
+```assembly
+.global HardFault_Handler
+.type HardFault_Handler, %function
+HardFault_Handler:
+    /* 获取当前上下文 */
+    MRS     r0, msp                 /* 从处理程序获取故障上下文 */
+    TST     lr, #0x04               /* 如果!EXC_RETURN[2] */
+    BEQ     _get_sp_done
+    MRS     r0, psp                 /* 从线程获取故障上下文 */
+_get_sp_done:
+
+    STMFD   r0!, {r4 - r11}         /* 压入r4 - r11寄存器 */
+#if defined (__VFP_FP__) && !defined(__SOFTFP__)
+    STMFD   r0!, {lr}               /* 压入标志的占位符 */
+#endif
+    STMFD   r0!, {lr}               /* 压入exec_return寄存器 */
+
+    TST     lr, #0x04               /* 如果!EXC_RETURN[2] */
+    BEQ     _update_msp
+    MSR     psp, r0                 /* 更新堆栈指针到PSP */
+    B       _update_done
+_update_msp:
+    MSR     msp, r0                 /* 更新堆栈指针到MSP */
+_update_done:
+
+    PUSH    {LR}
+    BL      rt_hw_hard_fault_exception  /* 调用硬件故障异常处理函数 */
+    POP     {LR}
+
+    ORR     lr, lr, #0x04
+    BX      lr  /* 返回 */
+
+```
+
+
 
 # 8.RTT系统初始化
 
@@ -1379,6 +1433,7 @@ Robert Sedgewick, 红黑树的发明人，在《算法（第4版）》 中说过
 
 - [二叉搜索树、B树、B+树、AVL树、红黑树](https://zhuanlan.zhihu.com/p/355242138)
 - [树堆（Treap）和红黑树（RB-Tree）各有哪些优劣？](https://www.zhihu.com/question/27840936)
+
 # 11 scheduler
 
 ## 11.1 初始化
@@ -1454,5 +1509,215 @@ exit
 
 3. 执行线程切换`rt_hw_context_switch_to`
 
-## 11.6 线程切换
+- 这个函数只有目标线程，没有来源线程。
+- 只在第一次启动时在rt_system_scheduler_start()中调用。
+- 会设置rt_interrupt_to_thread为目标线程的地址。
+- 会设置rt_interrupt_from_thread为0，表示不需要保存来源线程的上下文。
+- 会设置rt_thread_switch_interrupt_flag为1，表示需要进行上下文切换。
+- 会设置PendSV异常的优先级为最低优先级，并触发PendSV异常。
 
+```assembly
+.global rt_hw_context_switch_to
+.type rt_hw_context_switch_to, %function
+rt_hw_context_switch_to:
+    /* 将要切换到的任务的地址存储到rt_interrupt_to_thread */
+    LDR r1, =rt_interrupt_to_thread
+    STR r0, [r1]
+
+#if defined (__VFP_FP__) && !defined(__SOFTFP__)
+    /* 清除CONTROL.FPCA */
+    MRS     r2, CONTROL         /* 读取CONTROL寄存器的值 */
+    BIC     r2, #0x04           /* 修改CONTROL寄存器的值 */
+    MSR     CONTROL, r2         /* 将修改后的值写回CONTROL寄存器 */
+#endif
+
+    /* 将rt_interrupt_from_thread设置为0 */
+    LDR r1, =rt_interrupt_from_thread
+    MOV r0, #0x0
+    STR r0, [r1]
+
+    /* 将rt_thread_switch_interrupt_flag设置为1 */
+    LDR     r1, =rt_thread_switch_interrupt_flag
+    MOV     r0, #1
+    STR     r0, [r1]
+
+    /* 设置PendSV和SysTick异常的优先级 */
+    LDR r0, =NVIC_SYSPRI2
+    LDR r1, =NVIC_PENDSV_PRI
+    LDR.W   r2, [r0,#0x00]       /* 读取NVIC_SYSPRI2寄存器的值 */
+    ORR     r1,r1,r2             /* 修改NVIC_SYSPRI2寄存器的值 */
+    STR     r1, [r0]             /* 将修改后的值写回NVIC_SYSPRI2寄存器 */
+
+    /* 触发PendSV异常（导致上下文切换） */
+    LDR r0, =NVIC_INT_CTRL      
+    LDR r1, =NVIC_PENDSVSET
+    STR r1, [r0]
+
+    /* 恢复MSP */
+    LDR     r0, =SCB_VTOR
+    LDR     r0, [r0]
+    LDR     r0, [r0]
+    NOP
+    MSR     msp, r0
+
+    /* 在处理器级别启用中断 */
+    CPSIE   F
+    CPSIE   I
+
+    /* 确保在后续操作之前已经发生了PendSV异常 */
+    DSB
+    ISB
+
+    /* 这里永远不会到达！ */
+
+```
+
+## 11.7 临界区保护
+1. rt_enter_critical(void)：这个函数用于锁定线程调度器。它首先禁用中断，然后将调度器锁定的层数加一，并将新的层数保存在critical_level变量中。然后，它启用中断，并返回新的调度器锁定层数。这个函数通常用于进入临界区。
+2. rt_exit_critical(void)：这个函数用于解锁线程调度器。它首先禁用中断，然后将调度器锁定的层数减一。如果调度器锁定的层数减到0或以下，它将调度器锁定的层数重置为0，然后启用中断，并检查是否需要进行任务调度。如果调度器锁定的层数仍然大于0，它将直接启用中断。这个函数通常用于退出临界区。
+3. rt_critical_level(void)：这个函数返回当前的调度器锁定层数。如果返回值为0，表示调度器当前未被锁定。
+
+> 这些函数通常用于实现临界区，以保护共享资源的访问。在临界区内，调度器被锁定，因此不会发生上下文切换。当离开临界区时，调度器被解锁，如果有必要，还会进行重新调度。这样可以确保在临界区内的代码不会被其他线程中断，从而保护了共享资源的一致性。注意，这些函数通常在内核或驱动程序代码中使用，应用程序代码通常不直接使用它们。在应用程序代码中，通常使用互斥量、信号量等同步原语来保护共享资源。这些同步原语的实现内部可能会使用到这些函数。
+
+## 11.8 调度实现
+
+[rt_schedule 分析](https://club.rt-thread.org/ask/question/67e5da9b4f0149e7.html)
+
+1. 中断屏蔽,`rt_scheduler_lock_nest` = 0,即没有进入临界区,则进行线程调度
+2. `rt_thread_ready_priority_group != 0`,系统存在就绪线程,进行线程调度
+3. 获取最高优先级的线程和优先级
+4. 获取需要执行的线程
+5. 如果当前线程不是最高优先级线程,则进行线程切换
+  1. 如果需要插入线程,把`from`插入就绪链表末尾
+  2. 从就绪链表中删除`to`线程
+  3. 执行栈异常检测
+  4. 执行线程切换
+6. 不需要切换,则从就绪链表中删除`to`线程
+
+## 11.9 线程切换
+
+### 11.9.1 上下文切换
+
+```assembly
+.global rt_hw_context_switch_interrupt  // 声明一个全局函数 rt_hw_context_switch_interrupt
+.type rt_hw_context_switch_interrupt, %function  // 定义 rt_hw_context_switch_interrupt 的类型为函数
+
+.global rt_hw_context_switch  // 声明一个全局函数 rt_hw_context_switch
+.type rt_hw_context_switch, %function  // 定义 rt_hw_context_switch 的类型为函数
+
+rt_hw_context_switch_interrupt:  // rt_hw_context_switch_interrupt 函数的开始
+rt_hw_context_switch:  // rt_hw_context_switch 函数的开始
+    // 设置 rt_thread_switch_interrupt_flag 为 1
+    LDR     r2, =rt_thread_switch_interrupt_flag  // 将 rt_thread_switch_interrupt_flag 的地址加载到寄存器 r2
+    LDR     r3, [r2]  // 从 r2 指向的地址加载值到寄存器 r3
+    CMP     r3, #1  // 比较 r3 和 1
+    BEQ     _reswitch  // 如果 r3 等于 1，跳转到 _reswitch
+    MOV     r3, #1  // 将 1 移动到寄存器 r3
+    STR     r3, [r2]  // 将 r3 的值存储到 r2 指向的地址
+
+    // 设置 rt_interrupt_from_thread
+    LDR     r2, =rt_interrupt_from_thread  // 将 rt_interrupt_from_thread 的地址加载到寄存器 r2
+    STR     r0, [r2]  // 将 r0 的值存储到 r2 指向的地址
+
+_reswitch:  // _reswitch 标签的开始
+    // 设置 rt_interrupt_to_thread
+    LDR     r2, =rt_interrupt_to_thread  // 将 rt_interrupt_to_thread 的地址加载到寄存器 r2
+    STR     r1, [r2]  // 将 r1 的值存储到 r2 指向的地址
+
+    // 触发 PendSV 异常（导致上下文切换）
+    LDR r0, =NVIC_INT_CTRL  // 将 NVIC_INT_CTRL 的地址加载到寄存器 r0
+    LDR r1, =NVIC_PENDSVSET  // 将 NVIC_PENDSVSET 的地址加载到寄存器 r1
+    STR r1, [r0]  // 将 r1 的值存储到 r0 指向的地址
+    BX  LR  // 返回函数
+```
+
+### 11.9.2 PENSV异常处理
+
+```assembly
+.global PendSV_Handler
+.type PendSV_Handler, %function
+PendSV_Handler:
+    /* 禁用中断以保护上下文切换 */
+    MRS r2, PRIMASK
+    CPSID   I
+
+    /* 获取rt_thread_switch_interrupt_flag */
+    LDR r0, =rt_thread_switch_interrupt_flag
+    LDR r1, [r0]
+    CBZ r1, pendsv_exit         /* 如果pendsv已经处理过，则退出 */
+
+    /* 清除rt_thread_switch_interrupt_flag，将其设置为0 */
+    MOV r1, #0x00
+    STR r1, [r0]
+
+    /* 获取rt_interrupt_from_thread的值 */
+    LDR r0, =rt_interrupt_from_thread
+    LDR r1, [r0]
+    CBZ r1, switch_to_thread    /* 如果是第一次进行任务切换，则跳过寄存器保存 */
+
+    /* 保存上下文 */
+    MRS r1, psp                 /* 获取当前任务的堆栈指针 */
+
+#if defined (__VFP_FP__) && !defined(__SOFTFP__)
+    TST     lr, #0x10           /* 如果!EXC_RETURN[4] */
+    IT      EQ
+    VSTMDBEQ r1!, {d8 - d15}    /* 保存FPU寄存器s16~s31 */
+#endif
+
+    STMFD   r1!, {r4 - r11}     /* 保存r4 - r11寄存器 */
+
+#if defined (__VFP_FP__) && !defined(__SOFTFP__)
+    MOV     r4, #0x00           /* 设置flag为0 */
+
+    TST     lr, #0x10           /* 如果!EXC_RETURN[4] */
+    IT      EQ
+    MOVEQ   r4, #0x01           /* 设置flag为1 */
+
+    STMFD   r1!, {r4}           /* 保存flag */
+#endif
+
+    LDR r0, [r0]
+    STR r1, [r0]                /* 更新当前任务的堆栈指针 */
+
+switch_to_thread:
+    /* 加载新任务的上下文 */
+    LDR r1, =rt_interrupt_to_thread
+    LDR r1, [r1]
+    LDR r1, [r1]                /* 加载新任务的堆栈指针 */
+
+#if defined (__VFP_FP__) && !defined(__SOFTFP__)
+    LDMFD   r1!, {r3}           /* 弹出flag */
+#endif
+
+    LDMFD   r1!, {r4 - r11}     /* 弹出r4 - r11寄存器 */
+
+#if defined (__VFP_FP__) && !defined(__SOFTFP__)
+    CMP     r3,  #0             /* 如果flag_r3 != 0 */
+    IT      NE
+    VLDMIANE  r1!, {d8 - d15}   /* 弹出FPU寄存器s16~s31 */
+#endif
+
+    MSR psp, r1                 /* 更新堆栈指针 */
+
+#if defined (__VFP_FP__) && !defined(__SOFTFP__)
+    ORR     lr, lr, #0x10       /* lr |=  (1 << 4)，清除FPCA。 */
+    CMP     r3,  #0             /* 如果flag_r3 != 0 */
+    IT      NE
+    BICNE   lr, lr, #0x10       /* lr &= ~(1 << 4)，设置FPCA。 */
+#endif
+
+#if defined (RT_USING_MEM_PROTECTION)
+    PUSH    {r0-r3, r12, lr}
+    LDR     r1, =rt_current_thread
+    LDR     r0, [r1]
+    BL      rt_hw_mpu_table_switch
+    POP     {r0-r3, r12, lr}
+#endif
+
+pendsv_exit:
+    /* 恢复中断 */
+    MSR PRIMASK, r2
+
+    ORR lr, lr, #0x04
+    BX  lr
+```
