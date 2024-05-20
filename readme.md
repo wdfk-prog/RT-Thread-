@@ -1195,6 +1195,59 @@ rt_inline int zoneindex(rt_size_t *bytes)
 3. 解锁
 4. 调用malloc call函数
 
+## 9.6 TLSF 内存管理算法
+
+> https://www.cnblogs.com/pwl999/p/15534968.html
+
+### 9.6.1 堆初始化
+1. 创建内存池
+- 清空结构体信息
+2. 添加内存池
+- 传递给给定内存块中的 `TLSF` 结构的开销`tlsf_add_pool`，等于空闲块的开销和哨兵块。
+- 创建主要空闲块。稍微偏移块的起点以便 `prev_phys_block` 字段落在池之外它永远不会被使用。
+
+> 使用`const`的原因有很多：**提高代码的可读性**：`const`关键字告诉读代码的人这个变量的值不会改变，这有助于理解代码的行为。**防止误操作**：在函数的其余部分，如果你试图改变`oldsize`的值，编译器会报错，因此可以防止因误操作而导致的错误。**优化性能**：编译器知道`const`变量的值不会改变，可能会进行一些优化。
+
+- 设置块的大小,并设置该块为未使用,设置下一个块为使用中
+
+```c
+const size_t oldsize = block->size;
+//保留原有的oldsize使用标志不变的情况下,设置新的size
+block->size = size | (oldsize & (block_header_free_bit | block_header_prev_free_bit));
+```
+
+- 插入新的块
+
+```c
+static void mapping_insert(size_t size, int *fli, int *sli)
+{
+    int fl, sl;
+    if (size < SMALL_BLOCK_SIZE) // 如果大小小于小块的大小
+    {
+        /* Store small blocks in first list. */
+        fl = 0; // 第一级索引设置为0
+        sl = tlsf_cast(int, size) / (SMALL_BLOCK_SIZE / SL_INDEX_COUNT); // 第二级索引根据大小和小块的数量进行计算
+    }
+    else // 如果大小大于或等于小块的大小
+    {
+        fl = tlsf_fls_sizet(size); // 使用位操作找到最高位的1，也就是第一级索引
+        sl = tlsf_cast(int, size >> (fl - SL_INDEX_COUNT_LOG2)) ^ (1 << SL_INDEX_COUNT_LOG2); // 使用位操作计算第二级索引
+        fl -= (FL_INDEX_SHIFT - 1); // 调整第一级索引，使其从0开始
+    }
+    *fli = fl; // 返回第一级索引
+    *sli = sl; // 返回第二级索引
+}
+```
+
+- 分割块以创建零大小的哨兵块
+
+### 9.6.2 添加堆
+- 根据地址添加池
+- 添加当前堆到链表中
+
+### 9.6.3 malloc
+
+
 # 10. 系统定时器
 
 ## 10.1 跳跃表
