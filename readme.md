@@ -1487,9 +1487,9 @@ Robert Sedgewick, 红黑树的发明人，在《算法（第4版）》 中说过
 - [二叉搜索树、B树、B+树、AVL树、红黑树](https://zhuanlan.zhihu.com/p/355242138)
 - [树堆（Treap）和红黑树（RB-Tree）各有哪些优劣？](https://www.zhihu.com/question/27840936)
 
-# 11 scheduler
+# 12 调度
 
-## 11.1 初始化
+## 12.1 初始化
 
 1. 根据支持的最大优先级,初始化不同的链表
 
@@ -1503,7 +1503,7 @@ for (offset = 0; offset < RT_THREAD_PRIORITY_MAX; offset ++)
 2. 初始化就绪优先级组
 3. 优先级>32, 初始化线程就绪表
 
-## 11.2 位图
+## 12.2 位图
 
 - 软件实现
 
@@ -1528,7 +1528,7 @@ exit
 }
 ```
 
-## 11.3 插入线程
+## 12.3 插入线程
 
 ![image-20240512142100156](readme.assets/image-20240512142100156.png)
 
@@ -1536,18 +1536,18 @@ exit
 2. 否则,还是时间片未走完,将其插入到链表尾部;
 3. `rt_thread_ready_priority_group`置位,用于更快确认系统使用了什么优先级任务
 
-## 11.4 删除线程
+## 12.4 删除线程
 
 1. 从链表中删除线程
 2. 判断该优先级任务链表是否为空,为空则清除`rt_thread_ready_priority_group`中的相关置位标志.
 
-## 11.5 线程启动
+## 12.5 线程启动
 
 1. 线程状态设置为`RT_THREAD_SUSPEND`
 
 2.`number_mask = 1L << RT_SCHED_PRIV(thread).current_priority;`
 
-## 11.6 系统启动
+## 12.6 系统启动
 
 1. 调度程序获取最高优先级线程`_scheduler_get_highest_priority_thread`
 
@@ -1625,14 +1625,14 @@ rt_hw_context_switch_to:
 
 ```
 
-## 11.7 临界区保护
+## 12.7 临界区保护
 1. rt_enter_critical(void)：这个函数用于锁定线程调度器。它首先禁用中断，然后将调度器锁定的层数加一，并将新的层数保存在critical_level变量中。然后，它启用中断，并返回新的调度器锁定层数。这个函数通常用于进入临界区。
 2. rt_exit_critical(void)：这个函数用于解锁线程调度器。它首先禁用中断，然后将调度器锁定的层数减一。如果调度器锁定的层数减到0或以下，它将调度器锁定的层数重置为0，然后启用中断，并检查是否需要进行任务调度。如果调度器锁定的层数仍然大于0，它将直接启用中断。这个函数通常用于退出临界区。
 3. rt_critical_level(void)：这个函数返回当前的调度器锁定层数。如果返回值为0，表示调度器当前未被锁定。
 
 > 这些函数通常用于实现临界区，以保护共享资源的访问。在临界区内，调度器被锁定，因此不会发生上下文切换。当离开临界区时，调度器被解锁，如果有必要，还会进行重新调度。这样可以确保在临界区内的代码不会被其他线程中断，从而保护了共享资源的一致性。注意，这些函数通常在内核或驱动程序代码中使用，应用程序代码通常不直接使用它们。在应用程序代码中，通常使用互斥量、信号量等同步原语来保护共享资源。这些同步原语的实现内部可能会使用到这些函数。
 
-## 11.8 调度实现
+## 12.8 调度实现
 
 [rt_schedule 分析](https://club.rt-thread.org/ask/question/67e5da9b4f0149e7.html)
 
@@ -1647,9 +1647,9 @@ rt_hw_context_switch_to:
   4. 执行线程切换
 6. 不需要切换,则从就绪链表中删除`to`线程
 
-## 11.9 线程切换
+## 12.9 线程切换
 
-### 11.9.1 上下文切换
+### 12.9.1 上下文切换
 
 ```assembly
 .global rt_hw_context_switch_interrupt  // 声明一个全局函数 rt_hw_context_switch_interrupt
@@ -1684,7 +1684,7 @@ _reswitch:  // _reswitch 标签的开始
     BX  LR  // 返回函数
 ```
 
-### 11.9.2 PENSV异常处理
+### 12.9.2 PENSV异常处理
 
 ```assembly
 .global PendSV_Handler
@@ -1774,3 +1774,90 @@ pendsv_exit:
     ORR lr, lr, #0x04
     BX  lr
 ```
+
+# 13 线程
+
+## 13.1 线程创建
+- 初始化上下文信息
+- 将栈初始化为`#`号
+
+```c
+rt_uint8_t *rt_hw_stack_init(void       *tentry,
+                             void       *parameter,
+                             rt_uint8_t *stack_addr,
+                             void       *texit)
+{
+    struct stack_frame *stack_frame;
+    rt_uint8_t         *stk;
+    unsigned long       i;
+
+    stk  = stack_addr + sizeof(rt_uint32_t);
+    stk  = (rt_uint8_t *)RT_ALIGN_DOWN((rt_uint32_t)stk, 8);
+    stk -= sizeof(struct stack_frame);
+
+    stack_frame = (struct stack_frame *)stk;
+
+    /* init all register */
+    for (i = 0; i < sizeof(struct stack_frame) / sizeof(rt_uint32_t); i ++)
+    {
+        ((rt_uint32_t *)stack_frame)[i] = 0xdeadbeef;
+    }
+
+    stack_frame->exception_stack_frame.r0  = (unsigned long)parameter; /* r0 : argument */
+    stack_frame->exception_stack_frame.r1  = 0;                        /* r1 */
+    stack_frame->exception_stack_frame.r2  = 0;                        /* r2 */
+    stack_frame->exception_stack_frame.r3  = 0;                        /* r3 */
+    stack_frame->exception_stack_frame.r12 = 0;                        /* r12 */
+    stack_frame->exception_stack_frame.lr  = (unsigned long)texit;     /* lr */
+    stack_frame->exception_stack_frame.pc  = (unsigned long)tentry;    /* entry point, pc */
+    stack_frame->exception_stack_frame.psr = 0x01000000L;              /* PSR */
+
+#if USE_FPU
+    stack_frame->flag = 0;
+#endif /* USE_FPU */
+
+    /* return task's current stack address */
+    return stk;
+}
+```
+
+> R0-R3: 这些寄存器在函数调用时通常用于传递参数。R0被设置为传入的参数，而R1到R3被初始化为0。这是因为在这个特定的上下文中，我们只需要一个参数。如果有更多的参数，它们会被放在R1，R2，和R3中。
+> LR (Link Register): 这个寄存器通常包含函数返回地址。LR被设置为texit，当任务完成时，它会跳转到这个地址。
+> PC (Program Counter): 这个寄存器包含下一条要执行的指令的地址。PC被设置为tentry，这意味着当任务开始时，它会从这个地址开始执行。
+> PSR (Program Status Register): 这个寄存器包含了关于程序状态的信息，如条件代码和中断禁用位。在这个函数中，PSR被设置为0x01000000L，这是一个特定的值，表示默认的状态
+
+- 初始化线程定时器
+
+## 13.2 线程启动
+
+- 上锁
+
+- 该函数将恢复一个线程并将其放入系统就绪队列。
+  - 停止线程定时器
+  - 从挂起链表中移除,插入就绪链表中
+
+- 解锁并调度
+
+## 13.3 线程挂起
+
+- 设置状态为挂起状态
+- 等待下一次触发时挂起
+
+## 11.4 线程延时
+
+- 设置定时器超时时间并启动
+- 执行一次调度安排
+
+> `rt_thread_delay` 和 `rt_thread_delay_until` delay是相对时间，delay_until是绝对时间
+
+## 11.5 线程超时
+
+- 线程定时器超时后,从挂起链表中移除,插入就绪链表中
+
+## 11.6 线程退出 && 线程删除
+- 线程退出
+  - 设置线程状态为`RT_THREAD_CLOSE`
+  - 从就绪链表中移除
+  - 释放线程资源
+
+
