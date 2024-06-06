@@ -2237,3 +2237,260 @@ rt_inline enum rt_ringbuffer_state rt_ringbuffer_status(struct rt_ringbuffer *rb
     return RT_RINGBUFFER_HALFFULL;
 }
 ```
+
+# 20 completion
+
+- completion 可以称之为完成量，是一种轻量级的线程间（IPC）同步机制
+
+- 完成量和信号量对比
+
+信号量是一种非常灵活的同步方式，可以运用在多种场合中。形成锁、同步、资源计数等关系，也能方便的用于线程与线程、中断与线程间的同步中。
+完成量，是一种更加轻型的线程间同步的一种实现，可以理解为轻量级的二值信号，可以用于线程和线程间同步，也可以用于线程和中断之间的同步。
+完成量不支持在某个线程中调用 rt_completion_wait，还未唤醒退出时，在另一个线程中调用该函数。
+注意：当完成量应用于线程和中断之间的同步时，中断函数中只能调用 rt_completion_done 接口，而不能调用 rt_completion_wait 接口，因为 wait 接口是阻塞型接口，不可以在中断函数中调用
+
+```c
+/**
+ * Completion - A tiny & rapid IPC primitive for resource-constrained scenarios
+ *
+ * It's an IPC using one CPU word with the encoding:
+ *
+ * BIT      | MAX-1 ----------------- 1 |       0        |
+ * CONTENT  |   suspended_thread & ~1   | completed flag |
+ */
+
+struct rt_completion
+{
+    /* suspended thread, and completed flag */
+    rt_atomic_t susp_thread_n_flag;
+};
+```
+
+## 20.1 初始化
+
+- thread在等待时传入,初始化时不需要传入
+
+```c
+completion->susp_thread_n_flag = RT_COMPLETION_NEW_STAT(RT_NULL, RT_UNCOMPLETED);
+```
+
+## 20.2 完成
+
+1. 当前已经是完成状态,直接返回
+
+2. 获取线程
+
+- `RT_COMPLETION_THREAD(comp)` 这个宏的作用就是获取 `susp_thread_n_flag` 中的线程指针。它通过对 `susp_thread_n_flag 和 ~1` 进行位与操作（&），清除了最低位的标志位，剩下的就是线程指针。
+
+```c
+#define RT_COMPLETION_THREAD(comp) ((rt_thread_t)((comp)->susp_thread_n_flag & ~1))
+
+suspend_thread = RT_COMPLETION_THREAD(completion);
+```
+
+3. 唤醒线程
+
+4. 设置完成状态`RT_COMPLETED`
+
+## 20.3 等待
+
+1. 获取当前线程,需要阻塞时传入到flag中
+
+2. 获取当前完成量的状态,不为`RT_COMPLETED`则进行挂起
+
+# 21 工作队列
+
+工作队列内部有一个工作链表（worklist），链表上有多个工作项（work item）节点，我们可以将工作项简单理解为函数，因此工作链表上就存储着一系列待执行的函数。而且工作队列内有个线程一直在轮询工作链表，每次都从工作链表中取出一个工作项，并执行其相关联的函数。当工作队列为空时，线程会被挂起。
+
+```c
+/* workqueue implementation */
+struct rt_workqueue
+{
+    rt_list_t      work_list;
+    rt_list_t      delayed_list;
+    struct rt_work *work_current; /* current work */
+
+    struct rt_semaphore sem;
+    rt_thread_t    work_thread;
+    struct rt_spinlock spinlock;
+};
+
+struct rt_work
+{
+    rt_list_t list;
+
+    void (*work_func)(struct rt_work *work, void *work_data);
+    void *work_data;
+    rt_uint16_t flags;
+    rt_uint16_t type;
+    struct rt_timer timer;
+    struct rt_workqueue *workqueue;
+};
+```
+
+## 21.1 初始化
+
+- 创建工作队列
+
+1. 分配工作队列内存
+
+2. 初始话队列链表和延迟链表;信号量
+
+3. 创建线程`_workqueue_thread_entry`,并启动线程
+
+- 创建工作项
+
+1. 初始化工作项链表,注册回调函数及数据指针
+
+## 21.2 提交工作项
+
+1. 删除列表 ??
+
+2. 有定时时间
+
+- 根据工作项是否已经发送状态,进行定时器定时操作
+
+- 将工作项插入到工作队列延时链表中,开启定时器
+
+3. 没有定时时间
+
+## 21.3 工作队列线程
+
+0. while循环
+
+1. 队列为空,挂起线程,产生调度;等待队列有工作项
+
+2. 从队列中取出工作项,执行回调函数,删除该工作项
+
+## 21.4 定时器超时
+
+1. 将工作项从延时链表中移除,插入工作链表中
+
+## 21.5 信号量作用
+
+- `rt_workqueue_cancel_work_sync`
+
+1. 执行时判断当前工作项是要取消工作项,则获取信号量,阻塞等待工作项执行完成
+
+- 工作线程中`_workqueue_work_completion`
+
+1. 执行完成后,获取信号量;注意,因为执行完成后工作项自动删除,所以不需要再次删除
+
+2. 如果信号量阻塞超时,证明需要释放信号量,通知 `rt_workqueue_cancel_work_sync`取消工作项
+
+3. 没有超时,则开始下一个工作项
+
+# 22 dataqueue
+
+消息队列：消息队列能够接收来自线程或中断服务例程中不固定长度的消息，并把消息缓存在自己的内存空间中。其他线程也能够从消息队列中读取相应的消息，而当消息队列是空的时候，可以挂起读取线程。当有新的消息到达时，挂起的线程将被唤醒以接收并处理消息。消息队列是一种异步的通信方式。(摘自 RT-Thread文档中心).
+
+数据队列：没有找到官方详细的说明，只是在 RT-Thread API参考手册,有介绍。数据队列能够接收来自线程中不固定长度的数据，数据 不会 缓存在自己的内存空间中，自己的内存空间只有一个指向这包数据的指针。其他线程也能够从数据队列获取数据，当数据队列为空的时候，可以挂起线程。当有新的数据到达时，挂起的线程将被唤醒以接收并处理消息。数据队列是一种异步的通信方式。
+
+消息队列 是用于线程消息传递的，属于线程间同步异步 IPC；消息队列在 recv 数据之后，这组数据就没了。
+
+数据队列 更多的使用在流式数据传递，属于线程间通信 IPC；数据队列可以使用 peak 的方式 舔一下 这组数据不会丢失。自带高、低水位，可以对锯齿速度(压入数据的间隔不一致，时快时慢的)情况进行调节.
+
+```
+data queu -> 数据队列
+ring buffer -> 环形缓冲区
+
+data queue -> 数据丢到队列中，并不做数据拷贝；
+ring buffer -> 数据会拷贝到缓冲区中
+
+data queue -> 自带高、低水位，可以对锯齿速度情况进行调节
+ring buffer -> 完全不带出、入数据时，任务的挂起机制
+```
+
+```c
+#define 	RT_DATAQUEUE_EVENT_UNKNOWN   0x00// 	未知数据队列事件
+ 
+#define 	RT_DATAQUEUE_EVENT_POP   0x01// 	数据队列取出事件
+ 
+#define 	RT_DATAQUEUE_EVENT_PUSH   0x02// 	数据队列写入事件
+ 
+#define 	RT_DATAQUEUE_EVENT_LWM   0x03// 	数据队列数达到设定阈值事件
+ 
+#define 	RT_DATAQUEUE_SIZE(dq)   ((dq)->put_index - (dq)->get_index)// 	数据队列使用数量
+ 
+#define 	RT_DATAQUEUE_EMPTY(dq)   ((dq)->size - RT_DATAQUEUE_SIZE(dq))// 	数据队列空闲数量
+```
+
+# 23 环形缓冲块 ringbolck
+
+环形块状缓冲区简称为：rbb。与传统的环形缓冲区不同的是，rbb 是一个由很多不定长度的块组成的环形缓冲区，而传统的环形缓冲区是由很多个单字节的 char 组成。rbb 支持 零字节拷贝 。所以 rbb 非常适合用于生产者顺序 put 数据块，消费者顺序 get 数据块的场景，例如：DMA 传输，通信帧的接收与发送等等
+
+ringblk: 是由 多个不同长度 的 block 组成的，ringbuff : 是由单字节的数据组成的。ringblk 每一个 block 有多少个字节可以由用户自己设定。
+ringblk 支持零字节拷贝(不需要额外的 memcpy 操作)。所以 rbb 非常适合用于生产者顺序 put 数据块，消费者顺序 get 数据块的场景，例如：DMA 传输，通信帧的接收与发送等等。
+
+## 23.1 初始化
+
+1. 初始化块链表和释放链表
+2. 对每一个块链表进行初始化,并插入到释放链表中
+
+## 23.2 PUT & GET 块
+
+- put
+
+```c
+block->status = RT_RBB_BLK_PUT;
+```
+
+- get
+
+1. 判断块链表为空,则返回NULL
+
+2. 遍历链表,找到具有`RT_RBB_BLK_PUT`状态的块,设置状态为`RT_RBB_BLK_GET`,返回块指针
+
+## 23.3 块释放
+
+1. 从块链表总移除块,并插入到释放链表中
+
+## 23.4 rt_rbb_blk_queue_get
+
+```c
+//遍历块链表
+for (; node; node = tmp, tmp = rt_slist_next(node))
+{
+    //// 如果下一个 block 为空
+    if (!last_block)
+    {
+        // // 获取 list 节点上的结构体的地址
+        last_block = rt_slist_entry(node, struct rt_rbb_blk, list);
+        if (last_block->status == RT_RBB_BLK_PUT)
+        {
+            // 保存第一个 block
+            blk_queue->blocks = last_block;
+            blk_queue->blk_num = 0;
+        }
+        else
+        {
+            // 没有找到可用的 block
+            last_block = RT_NULL;
+            continue;
+        }
+    }
+    else
+    {
+        block = rt_slist_entry(node, struct rt_rbb_blk, list);
+        /*
+            1.当前块没有放置状态
+            2.最后一个块和当前块是不连续的
+            3.data_total_size将超出范围
+        */
+        if (block->status != RT_RBB_BLK_PUT ||
+                last_block->buf > block->buf ||
+                data_total_size + block->size > queue_data_len)
+        {
+            break;
+        }
+        /* backup last block */
+        last_block = block;
+    }
+    /* remove current block */
+    data_total_size += last_block->size;
+    last_block->status = RT_RBB_BLK_GET;
+    blk_queue->blk_num++;
+}
+```
+
+## 23.5 rt_rbb_blk_alloc
