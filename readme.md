@@ -2415,7 +2415,7 @@ ring buffer -> 完全不带出、入数据时，任务的挂起机制
 #define 	RT_DATAQUEUE_EMPTY(dq)   ((dq)->size - RT_DATAQUEUE_SIZE(dq))// 	数据队列空闲数量
 ```
 
-# 23 环形缓冲块 ringbolck
+# 23 环形缓冲块 ringblock
 
 环形块状缓冲区简称为：rbb。与传统的环形缓冲区不同的是，rbb 是一个由很多不定长度的块组成的环形缓冲区，而传统的环形缓冲区是由很多个单字节的 char 组成。rbb 支持 零字节拷贝 。所以 rbb 非常适合用于生产者顺序 put 数据块，消费者顺序 get 数据块的场景，例如：DMA 传输，通信帧的接收与发送等等
 
@@ -2494,3 +2494,91 @@ for (; node; node = tmp, tmp = rt_slist_next(node))
 ```
 
 ## 23.5 rt_rbb_blk_alloc
+
+```c
+rt_rbb_blk_t rt_rbb_blk_alloc(rt_rbb_t rbb, rt_size_t blk_size)
+{
+    new_rbb = find_empty_blk_in_set(rbb); // 找到一个空闲块
+    // 判断申请出来的块是不是在 最大范围之内
+    if (rt_slist_len(&rbb->blk_list) < rbb->blk_max_num && new_rbb)
+    {
+        if (rt_slist_len(&rbb->blk_list) > 0) // 检查是不是第一次申请blk
+        {   // 获取头节点的结构体起始地址
+            head = rt_slist_first_entry(&rbb->blk_list, struct rt_rbb_blk, list);
+            // 获取尾节点的结构体起始地址
+            tail = rt_slist_tail_entry(&rbb->blk_list, struct rt_rbb_blk, list);
+            if (head->buf <= tail->buf) // 头节点数据缓冲区的地址小于尾节点的数据缓存区的地址
+            {
+        /**
+         *                      head                     tail
+         * +--------------------------------------+-----------------+------------------+
+         * |      empty2     | block1 |   block2  |      block3     |       empty1     |
+         * +--------------------------------------+-----------------+------------------+
+         *                            rbb->buf
+         */
+                // 求出空 block 的大小
+                empty1 = (rbb->buf + rbb->buf_size) - (tail->buf + tail->size);
+                empty2 = head->buf - rbb->buf;
+                // 判断新的 block 可以存放的区域
+                if (empty1 >= blk_size)
+                { // 给 block 结构体赋值
+                    rt_slist_append(&rbb->blk_list, &new_rbb->list);
+                    new_rbb->status = RT_RBB_BLK_INITED;
+                    new_rbb->buf = tail->buf + tail->size;
+                    new_rbb->size = blk_size;
+                }
+                else if (empty2 >= blk_size)
+                {// 给 block 结构体赋值
+                    rt_slist_append(&rbb->blk_list, &new_rbb->list);
+                    new_rbb->status = RT_RBB_BLK_INITED;
+                    new_rbb->buf = rbb->buf;
+                    new_rbb->size = blk_size;
+                }
+                else
+                {
+                    /* no space */
+                    new_rbb = NULL;
+                }
+            }
+            else
+            {
+        /**
+         *        tail                                              head
+         * +----------------+-------------------------------------+--------+-----------+
+         * |     block3     |                empty1               | block1 |  block2   |
+         * +----------------+-------------------------------------+--------+-----------+
+         *                            rbb->buf
+         */
+                // 获取空闲的空间
+                empty1 = head->buf - (tail->buf + tail->size);
+                // 判断剩余空间是否够本次的分配
+                if (empty1 >= blk_size)
+                {// 给 block 结构体赋值
+                    rt_slist_append(&rbb->blk_list, &new_rbb->list);
+                    new_rbb->status = RT_RBB_BLK_INITED;
+                    new_rbb->buf = tail->buf + tail->size;
+                    new_rbb->size = blk_size;
+                }
+                else
+                {   /* no space */
+                    new_rbb = NULL;
+                }
+            }
+        }
+        else
+        {
+            /* the list is empty */
+            rt_slist_append(&rbb->blk_list, &new_rbb->list); // 把bew_rbb 链表插入到 rbb
+            new_rbb->status = RT_RBB_BLK_INITED; // 修改状态为 已经初始化
+            new_rbb->buf = rbb->buf; // 设置缓冲区
+            new_rbb->size = blk_size;// 设置块大小
+        }
+    }
+    else
+    {
+        new_rbb = NULL;
+    }
+    return new_rbb;
+}
+```
+
