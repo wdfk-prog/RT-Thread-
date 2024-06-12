@@ -2986,3 +2986,264 @@ int mkfifo(const char *path, mode_t mode)
     return 0;
 }
 ```
+
+# 27 串口驱动
+
+1. `rt_hw_usart_init`中调用`rt_hw_serial_register`注册串口设备
+
+```c
+int rt_hw_usart_init(void)
+for (rt_size_t i = 0; i < sizeof(uart_obj) / sizeof(struct stm32_uart); i++)
+{
+    /* init UART object */
+    uart_obj[i].config = &uart_config[i];
+    uart_obj[i].serial.ops    = &stm32_uart_ops;
+    uart_obj[i].serial.config = config;
+
+    /* register UART device */
+    result = rt_hw_serial_register(&uart_obj[i].serial, uart_obj[i].config->name,
+                                    RT_DEVICE_FLAG_RDWR
+                                    | RT_DEVICE_FLAG_INT_RX
+                                    | RT_DEVICE_FLAG_INT_TX
+                                    | uart_obj[i].uart_dma_flag
+                                    , NULL);
+    RT_ASSERT(result == RT_EOK);
+}
+int rt_hw_usart_init(void)
+```
+2. 串口设备注册
+
+```c
+    //设备类型设置为字符串类型
+    device->type        = RT_Device_Class_Char;
+    device->rx_indicate = RT_NULL;
+    device->tx_complete = RT_NULL;
+    //挂钩设备操作函数
+    device->init        = rt_serial_init;
+    device->open        = rt_serial_open;
+    device->close       = rt_serial_close;
+    device->read        = RT_NULL;
+    device->write       = RT_NULL;
+    device->control     = rt_serial_control;
+
+    device->user_data   = data;
+
+    /* register a character device */
+    ret = rt_device_register(device, name, flag);
+```
+
+## 27.1 串口V1
+
+1. `rt_serial_init`执行`configure`函数,配置串口参数
+
+2. RX接收驱动方式:
+- RX POLL方式,轮询方式,直接读取串口数据,直到读取到指定长度数据退出;
+- RX 中断方式,串口中断触发,读取串口数据;中断触发后,使用fifo缓冲区,一个个字节搬运,调用RX中再从fifo缓冲区读取数据;
+- RX DMA方式,串口DMA触发,读取串口数据;使用fifo缓冲区,从DMA搬运数据到fifo缓冲区,再从fifo缓冲区读取数据;
+
+3. TX发送驱动方式:
+- TX POLL方式,轮询方式,直接发送数据;每次发送一个字节,等待发送完成
+- TX 中断方式,串口中断触发,发送数据;每次发送一个字节,等待发送完成;如果发送失败,则阻塞等待完成量;完成量由TX完成中断触发
+- TX DMA方式,串口DMA触发,发送数据;使用数据队列,将数据放入队列,再从队列中取出数据发送;如果发送时队列满了,则阻塞等待
+
+## 27.1.1 RX中断方式
+
+### 27.1.1.1 open
+
+1. malloc分配fifo缓冲区
+
+> 可以使用ringbuff改造
+
+```c
+/*
+ * Serial FIFO mode
+ */
+struct rt_serial_rx_fifo
+{
+    /* software fifo */
+    rt_uint8_t *buffer;
+
+    rt_uint16_t put_index, get_index;
+
+    rt_bool_t is_full;
+};
+```
+### 27.1.1.2 read
+
+1. 从fifo缓冲区中读取数据,一个个字节读取
+
+> 效率低了,可以直接做逻辑读取lenth长度的数据
+
+### 27.1.1.3 ISR
+
+1. 串口中断中判断为接收中断,进入中断处理函数
+
+2. 读取串口数据,写入fifo缓冲区,并执行接收完成回调函数
+
+> 使用while方式一个个字节读取
+
+## 27.1.2 RX POLL方式
+
+1. while循环读取串口数据,直到读取到指定长度数据退出
+
+## 27.1.3 RX DMA方式
+
+### 27.1.3.1 open
+
+1. malloc分配fifo缓冲区
+2. control 调用底层驱动配置DMA
+
+### 27.1.3.2 read
+
+1. 获取fifo缓冲区中数据长度
+
+2. 从fifo中读取数据
+
+3. 更新fifo缓冲区读取指针
+
+### 27.1.3.3 ISR
+
+1. 中断处理函数,判断为DMA触发标志;获取DMA传输数据长度
+
+2. `UART_RX_DMA_IT_IDLE_FLAG` DMA+空闲中断触发
+
+- 计算接收数据长度
+
+3. `UART_RX_DMA_IT_HT_FLAG` DMA+半传输中断触发
+
+- 计算接收数据长度
+
+4. `UART_RX_DMA_IT_TC_FLAG`,DMA+传输完成中断触发
+
+5. 更新fifo put索引,计算接收数据长度.执行回调函数
+
+## 27.1.4 TX POLL方式
+
+1. while循环发送数据,直到发送完成
+
+- 调用`put`函数发送数据,一个个字节发送,while循环判断发送完成
+
+## 27.1.5 TX 中断方式
+
+### 27.1.5.1 open
+
+1. 初始化完成量,malloc分配fifo缓冲区
+
+### 27.1.5.2 write
+
+1. while循环发送数据,直到发送完成,一次发送一个字节
+
+2. `put`后等待完成量唤醒
+
+```c
+//这里使用while,防止put中断触发后,数据还没发送完成
+while (serial->ops->putc(serial, *(char*)data) == -1)
+{
+    rt_completion_wait(&(tx->completion), RT_WAITING_FOREVER);
+}
+```
+
+### 27.1.5.3 ISR
+
+1. 执行`RT_SERIAL_EVENT_TX_DONE`,触发完成量
+
+## 27.1.6 TX DMA方式
+
+- open
+
+1. malloc dataqueue缓冲区,初始化dataqueque
+
+```c
+// 4个数据可以唤醒
+rt_data_queue_init(&(tx_dma->data_queue), 8, 4, RT_NULL);
+```
+
+- write
+
+使用数据队列push,队列满时,阻塞等待
+
+```c
+    result = rt_data_queue_push(&(tx_dma->data_queue), data, length, RT_WAITING_FOREVER);
+    if (result == RT_EOK)
+    {
+        if (tx_dma->activated != RT_TRUE)
+        {
+            tx_dma->activated = RT_TRUE;
+            /* make a DMA transfer */
+            serial->ops->dma_transmit(serial, (rt_uint8_t *)data, length, RT_SERIAL_DMA_TX);
+        }
+    }
+    else
+    {
+        rt_set_errno(result);
+        return 0;
+    }
+```
+
+- ISR `HAL_UART_TxCpltCallback`
+
+1. 获取TX DMA计数,当计数为0时,执行`RT_SERIAL_EVENT_TX_DONE`
+
+2. `rt_data_queue_pop`出队列中的数据,DMA发送完成进入;再次`peek`是否还有数据,接着发送
+
+
+## 27.2 STM32 HAL 串口驱动
+
+1. `HAL_USART_Transmit`
+
+- 阻塞发送,直到发送完成,一次发送一个字节
+
+2. `HAL_USART_Receive`
+
+- 阻塞接收,直到接收完成,一次接收一个字节
+
+3. `HAL_USART_Transmit_IT`
+
+- 仅是使能与设置数据地址,具体实现需要自行编写
+
+- 设置`pTxBuffPtr`指针指向的数据地址,设置`TxXferSize`发送数据长度,设置`TxXferCount`发送数据计数
+
+- 使能`USART_IT_TXE`中断,发送数据
+
+- 设置` husart->TxISR`执行中断函数
+
+- `HAL_USART_IRQHandler`中断函数,判断为`USART_IT_TXE`中断,发送一个字节数据,直到发送完成指定数据长度,清除中断标志,执行`HAL_USART_TxCpltCallback`;
+
+4. `HAL_USART_Receive_IT`
+
+- 仅是使能与设置数据地址,具体实现需要自行编写
+
+- 使能`USART_IT_RXNE`中断,接收数据
+
+- 设置` husart->TxISR`执行中断函数
+
+- `HAL_USART_IRQHandler`中断函数,判断为`USART_IT_RXNE`中断,接收一个字节数据;直到中断接收完成需要的数据长度,执行`HAL_USART_RxCpltCallback`;
+
+5. `HAL_USART_Transmit_DMA`
+
+- 仅是使能与设置数据地址,具体实现需要自行编写
+
+- 设置`USART_DMATransmitCplt`,`USART_DMATxHalfCplt`,`USART_DMAError`
+
+- 设置`pTxBuffPtr`指针指向的数据地址,设置`TxXferSize`发送数据长度,设置`TxXferCount`发送数据计数
+
+- `HAL_DMA_IRQHandler`中执行`USART_DMATransmitCplt`,`USART_DMATxHalfCplt`,`USART_DMAError`
+
+6. `HAL_USART_Receive_DMA`
+
+- 仅是使能与设置数据地址,具体实现需要自行编写
+
+- 设置`USART_DMAReceiveCplt`,`USART_DMARxHalfCplt`,`USART_DMAError`
+
+- 设置`pRxBuffPtr`指针指向的数据地址,设置`RxXferSize`接收数据长度,设置`RxXferCount`接收数据计数
+
+- `HAL_DMA_IRQHandler`中执行`USART_DMAReceiveCplt`,`USART_DMARxHalfCplt`,`USART_DMAError`
+
+7. `HAL_UARTEx_ReceiveToIdle_DMA`
+
+- 仅是使能与设置数据地址,具体实现需要自行编写
+
+- 启动空闲中断可以执行完成回调
+
+## 27.3 串口驱动V2
+
