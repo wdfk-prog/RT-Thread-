@@ -3046,7 +3046,7 @@ int rt_hw_usart_init(void)
 - TX 中断方式,串口中断触发,发送数据;每次发送一个字节,等待发送完成;如果发送失败,则阻塞等待完成量;完成量由TX完成中断触发
 - TX DMA方式,串口DMA触发,发送数据;使用数据队列,将数据放入队列,再从队列中取出数据发送;如果发送时队列满了,则阻塞等待
 
-## 27.1.1 RX中断方式
+### 27.1.1 RX中断方式
 
 ### 27.1.1.1 open
 
@@ -3082,11 +3082,11 @@ struct rt_serial_rx_fifo
 
 > 使用while方式一个个字节读取
 
-## 27.1.2 RX POLL方式
+### 27.1.2 RX POLL方式
 
 1. while循环读取串口数据,直到读取到指定长度数据退出
 
-## 27.1.3 RX DMA方式
+### 27.1.3 RX DMA方式
 
 ### 27.1.3.1 open
 
@@ -3117,13 +3117,13 @@ struct rt_serial_rx_fifo
 
 5. 更新fifo put索引,计算接收数据长度.执行回调函数
 
-## 27.1.4 TX POLL方式
+### 27.1.4 TX POLL方式
 
 1. while循环发送数据,直到发送完成
 
 - 调用`put`函数发送数据,一个个字节发送,while循环判断发送完成
 
-## 27.1.5 TX 中断方式
+### 27.1.5 TX 中断方式
 
 ### 27.1.5.1 open
 
@@ -3147,7 +3147,7 @@ while (serial->ops->putc(serial, *(char*)data) == -1)
 
 1. 执行`RT_SERIAL_EVENT_TX_DONE`,触发完成量
 
-## 27.1.6 TX DMA方式
+### 27.1.6 TX DMA方式
 
 - open
 
@@ -3246,4 +3246,50 @@ rt_data_queue_init(&(tx_dma->data_queue), 8, 4, RT_NULL);
 - 启动空闲中断可以执行完成回调
 
 ## 27.3 串口驱动V2
+
+- 串口V1和串口V2驱动实现方式没区别,仅有概念不同,将底层的POLL,中断,阻塞变为了阻塞,非阻塞方式+是否DMA方式来使用
+
+### 27.3.1 RX 阻塞方式
+
+1. 没有缓冲区使用POLL方式,一次读取一字节数据,直到读取到指定长度数据退出;
+
+2. 有缓冲区使用ringbuff方式
+
+- 初始化ringbuff缓冲区和完成量,使用中断方式
+
+- 读取时:获取ringbuff缓冲区中数据长度,从ringbuff中读取数据,更新ringbuff缓冲区读取指针
+
+当获取到的长度<需要读取的长度时,完成量阻塞等待
+
+- 中断中:`RT_SERIAL_EVENT_RX_IND`时,完成量完成唤醒等待线程;更新ringbuff缓冲区写入指针
+
+### 27.3.2 RX 非阻塞方式
+
+- 初始化ringbuff缓冲区,使用DMA方式
+
+- 读取时:获取ringbuff缓冲区中数据长度,从ringbuff中读取数据,更新ringbuff缓冲区读取指针;
+
+获取长度为0时,外部自行处理判断,内部非阻塞返回
+
+- 中断中:`RT_SERIAL_EVENT_RX_DMADONE`时,更新ringbuff缓冲区写入指针
+
+### 27.3.3 TX 阻塞方式
+
+1. 没有缓冲区使用POLL方式,一次发送一字节数据,直到发送完成;
+
+2. 有缓冲区使用ringbuff方式
+
+- 初始化ringbuff缓冲区和完成量,使用中断方式
+
+- 写入时:将数据put到ringbuff缓冲区,等待完成量唤醒
+
+- 中断中:`RT_SERIAL_EVENT_TX_DONE`时,获取ringbuff获取完成,完成量完成唤醒等待线程;
+
+### 27.3.4 TX 非阻塞方式
+
+- 初始化ringbuff缓冲区,使用DMA方式
+
+- 写入时:将数据push到ringbuff缓冲区,直接返回
+
+- 中断中:`RT_SERIAL_EVENT_TX_DMADONE`时,读取ringbuff缓冲区数据,再次push到ringbuff缓冲区
 
