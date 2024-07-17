@@ -6917,6 +6917,30 @@ DIR *opendir(const char *name)
 
 ### 36.7.1 stat(文件状态查询)
 
+```c
+//https://en.wikibooks.org/wiki/C_Programming/POSIX_Reference/sys/stat.h
+struct stat
+{
+    dev_t st_dev;              // 文件的设备编号
+    uint16_t  st_ino;          // 节点
+    uint16_t  st_mode;         // 文件的类型和存取的权限
+    uint16_t  st_nlink;        // 连接到该文件的硬连接数目，刚建立的文件值为1
+    uint16_t  st_uid;          // 用户ID
+    uint16_t  st_gid;          // 组ID
+    struct rt_device *st_rdev; // 设备类型，若此文件为设备文件，则为其设备编号
+    uint32_t  st_size;         // 文件字节数（如果文件是常规文件或者目录）
+    time_t    st_atime;        // 文件最后一次被访问或者被执行的时间
+    long      st_spare1;       // 未使用
+    time_t    st_mtime;        // 文件内容最后一次被修改的时间
+    long      st_spare2;       // 未使用
+    time_t    st_ctime;        // 文件状态最后一次改变的时间
+    long      st_spare3;       // 未使用
+    uint32_t  st_blksize;      // 块大小（文件系统的I/O 缓冲区大小）
+    uint32_t  st_blocks;       // 块数
+    long      st_spare4[2];    // 未使用
+};
+```
+
 - `dfs_file_stat` : 查询文件状态,使用`DFS_REALPATH_EXCEPT_NONE`获取文件路径
 
 ```c
@@ -7068,6 +7092,8 @@ int dfs_file_close(struct dfs_file *file)
 ### 36.7.4 read && write
 
 - write不允许指定位置写入,只能顺序写入;pwrite允许指定位置写入
+- write和read都会对文件的位置进行加锁,防止多线程操作文件时出现问题
+- 实际使用过程中,如果具有多线程操作文件的需求,可以使用`pwrite`和`pread`进行操作
 
 ```c
 ssize_t dfs_file_read(struct dfs_file *file, void *buf, size_t len)
@@ -7170,7 +7196,7 @@ static uint32_t _dentry_hash(struct dfs_mnt *mnt, const char *path)
 }
 ```
 
-### 36.8.1 创建目录
+### 36.8.1 create 创建目录
 
 ```c
 static struct dfs_dentry *_dentry_create(struct dfs_mnt *mnt, char *path, rt_bool_t is_rela_path)
@@ -7209,7 +7235,7 @@ static struct dfs_dentry *_dentry_create(struct dfs_mnt *mnt, char *path, rt_boo
 }
 ```
 
-### 36.8.2 插入目录
+### 36.8.2 insert 插入目录
 
 ```c
 void dfs_dentry_insert(struct dfs_dentry *dentry)
@@ -7221,7 +7247,7 @@ void dfs_dentry_insert(struct dfs_dentry *dentry)
 }
 ```
 
-### 36.8.3 文件取消引用
+### 36.8.3 unref 文件取消引用
 
 ```c
 static void dfs_file_unref(struct dfs_file *file)
@@ -7255,6 +7281,78 @@ static void dfs_file_unref(struct dfs_file *file)
 
         dfs_file_unlock();
     }
+}
+```
+
+### 36.8.4 vnode 虚拟节点
+
+将vnode节点挂载到dentry节点上
+
+```
+    dentry = dfs_dentry_create(mnt, fullpath);
+    if (dentry)
+    {
+        DLOG(msg, "dfs_file", mnt->fs_ops->name, DLOG_MSG, "fs_ops->create_vnode");
+
+        if (dfs_is_mounted(mnt) == 0)
+        {
+            vnode = mnt->fs_ops->create_vnode(dentry, oflags & O_DIRECTORY ? FT_DIRECTORY:FT_REGULAR, mode);
+        }
+
+        if (vnode)
+        {
+            /* set vnode */
+            dentry->vnode = vnode;  /* the refcount of created vnode is 1. no need to reference */
+            dfs_dentry_insert(dentry);
+        }
+    }
+```
+
+### 36.8.5 lookup 查找目录
+
+```c
+/*
+ * lookup a dentry, return this dentry and increase refcount if exist, otherwise return NULL
+ */
+struct dfs_dentry *dfs_dentry_lookup(struct dfs_mnt *mnt, const char *path, uint32_t flags)
+{
+    struct dfs_dentry *dentry;
+    struct dfs_vnode *vnode = RT_NULL;
+    int mntpoint_len = strlen(mnt->fullpath);
+
+    dfs_file_lock();
+    //查找哈希表对应的dentry
+    dentry = _dentry_hash_lookup(mnt, path);
+    if (!dentry)
+    {
+        if (mnt->fs_ops->lookup)
+        {
+            /* not in hash table, create it */
+            dentry = dfs_dentry_create_rela(mnt, (char*)path);
+            if (dentry)
+            {
+                if (dfs_is_mounted(mnt) == 0)
+                {
+                    vnode = mnt->fs_ops->lookup(dentry);
+                }
+
+                if (vnode)
+                {
+                    dentry->vnode = vnode; /* the refcount of created vnode is 1. no need to reference */
+                    dfs_file_lock();
+                    rt_list_insert_after(&hash_head.head[_dentry_hash(mnt, path)], &dentry->hashlist);
+                    dentry->flags |= DENTRY_IS_ADDHASH;
+                    dfs_file_unlock();
+                }
+            }
+        }
+    }
+    else
+    {
+        DLOG(note, "dentry", "found dentry");
+    }
+    dfs_file_unlock();
+    return dentry;
 }
 ```
 
@@ -7430,3 +7528,280 @@ int stat(const char *file, struct stat *buf)
     return result;
 }
 ```
+
+# 37 tmpfs
+
+- 临时文件系统,不存储在硬盘上,存储在内存中;掉电后数据丢失
+- 文件结构和DFS相同;用文件方式统一目录和文件对象;
+- 文件具有同级链表和子节点链表进行关联文件结构
+
+## 37.1 文件系统操作
+
+### 37.1.1 mount 挂载
+
+```c
+    /* romfs 挂载在 / 下 */
+    /* fatfs 挂载在 /mnt 下 */
+    /* tmpfs 挂载在 /mnt/tmp 下 */
+    if (dfs_mount(RT_NULL, "/mnt/tmp", "tmp", 0, NULL) != 0)
+    {
+        rt_kprintf("Dir /tmp mount failed!\n");
+        return -1;
+    }
+```
+
+```c
+mnt->data = superblock; //挂载点数据为超级块
+//构造根目录
+superblock->root.name[0] = '/';
+superblock->root.sb = superblock;
+superblock->root.type = TMPFS_TYPE_DIR;
+```
+
+### 37.1.2 create_vnode 创建节点
+
+- 用于在目录下创建虚拟节点
+
+```c
+static struct dfs_vnode *dfs_tmpfs_create_vnode(struct dfs_dentry *dentry, int type, mode_t mode)
+{
+        superblock = (struct tmpfs_sb *)dentry->mnt->data;
+        superblock->df_size += sizeof(struct tmpfs_file);
+        /* open parent directory */
+        p_file = dfs_tmpfs_lookup(superblock, parent_path, &size);
+        /* create a file entry */
+        d_file = (struct tmpfs_file *)rt_calloc(1, sizeof(struct tmpfs_file));
+        strncpy(d_file->name, file_name, TMPFS_NAME_MAX);
+
+        rt_list_init(&(d_file->subdirs));
+        rt_list_init(&(d_file->sibling));
+        d_file->data = NULL;
+        d_file->fre_memory = RT_FALSE;
+
+        rt_spin_lock(&superblock->lock);
+        //将文件插入到父目录的子目录中
+        rt_list_insert_after(&(p_file->subdirs), &(d_file->sibling));
+        rt_spin_unlock(&superblock->lock);
+
+        vnode->mnt = dentry->mnt;
+        vnode->data = d_file;
+        vnode->size = d_file->size;
+    }
+    return vnode;
+}
+```
+
+### 37.1.3 lookup 查找文件
+
+- 根据路径查找文件
+- 创建vnode关联文件
+
+### 37.1.4 stat
+
+## 37.2 文件操作
+
+### 37.2.1 open && close
+
+```c
+static int dfs_tmpfs_open(struct dfs_file *file)
+{
+    struct tmpfs_file *d_file;
+
+    d_file = (struct tmpfs_file *)file->vnode->data;
+
+    //复写
+    if (file->flags & O_TRUNC)
+    {
+        d_file->size = 0;
+        file->vnode->size = d_file->size;
+        file->fpos = file->vnode->size;
+        if (d_file->data != NULL)
+        {
+            /* ToDo: fix for rt-smart. */
+            rt_free(d_file->data);
+            d_file->data = NULL;
+        }
+    }
+
+    if (file->flags & O_APPEND)
+    {
+        file->fpos = file->vnode->size;
+    }
+    else
+    {
+        file->fpos = 0;
+    }
+
+    RT_ASSERT(file->vnode->ref_count > 0);
+    if(file->vnode->ref_count == 1)
+    {
+        rt_mutex_init(&file->vnode->lock, file->dentry->pathname, RT_IPC_FLAG_PRIO);
+    }
+
+    return 0;
+}
+```
+
+### 37.2.2 read && write
+
+```c
+static ssize_t _dfs_tmpfs_write(struct tmpfs_file *d_file, const void *buf, size_t count, off_t *pos)
+{
+    struct tmpfs_sb *superblock;
+
+    RT_ASSERT(d_file != NULL);
+
+    superblock = d_file->sb;
+    RT_ASSERT(superblock != NULL);
+
+    if (count + *pos > d_file->size)
+    {
+        rt_uint8_t *ptr;
+        //重新分配更多的内存
+        ptr = rt_realloc(d_file->data, *pos + count);
+
+        rt_spin_lock(&superblock->lock);
+        superblock->df_size += (*pos - d_file->size + count);
+        rt_spin_unlock(&superblock->lock);
+        /* update d_file and file size */
+        d_file->data = ptr;
+        d_file->size = *pos + count;
+        LOG_D("tmpfile ptr:%x, size:%d", ptr, d_file->size);
+    }
+    //写入数据
+    if (count > 0)
+        memcpy(d_file->data + *pos, buf, count);
+
+    /* update file current position */
+    *pos += count;
+
+    return count;
+}
+
+static ssize_t dfs_tmpfs_read(struct dfs_file *file, void *buf, size_t count, off_t *pos)
+{
+    ssize_t length;
+    struct tmpfs_file *d_file;
+    d_file = (struct tmpfs_file *)file->vnode->data;
+
+    rt_mutex_take(&file->vnode->lock, RT_WAITING_FOREVER);
+    ssize_t size = (ssize_t)file->vnode->size;
+    if ((ssize_t)count < size - *pos)
+        length = count;
+    else
+        length = size - *pos;
+
+    if (length > 0)
+        memcpy(buf, &(d_file->data[*pos]), length);
+
+    // 更新文件位置,读取到的位置
+    *pos += length;
+
+    rt_mutex_release(&file->vnode->lock);
+
+    return length;
+}
+```
+
+### 37.2.3 lseek
+
+```c
+static off_t dfs_tmpfs_lseek(struct dfs_file *file, off_t offset, int wherece)
+{
+    switch (wherece)
+    {
+    case SEEK_SET:
+        break;
+
+    case SEEK_CUR:
+        offset += file->fpos;
+        break;
+
+    case SEEK_END:
+        offset += file->vnode->size;
+        break;
+
+    default:
+        return -EINVAL;
+    }
+
+    if (offset <= (off_t)file->vnode->size)
+    {
+        return offset;
+    }
+
+    return -EIO;
+}
+```
+
+### 37.2.4 getdents 获取目录条目
+
+```c
+static int dfs_tmpfs_getdents(struct dfs_file *file,
+                       struct dirent *dirp,
+                       uint32_t    count)
+{
+    //create_vnode中创建的文件
+    d_file = (struct tmpfs_file *)file->vnode->data;
+
+    rt_mutex_take(&file->vnode->lock, RT_WAITING_FOREVER);
+
+    end = file->fpos + count;
+    index = 0;
+    count = 0;
+    //获取文件的子目录
+    rt_list_for_each(list, &d_file->subdirs)
+    {   
+        //获取子目录中的兄弟节点进行拷贝
+        n_file = rt_list_entry(list, struct tmpfs_file, sibling);
+        if (index >= (rt_size_t)file->fpos)
+        {
+            d = dirp + count;
+            if (d_file->type == TMPFS_TYPE_FILE)
+            {
+                d->d_type = DT_REG;
+            }
+            if (d_file->type == TMPFS_TYPE_DIR)
+            {
+                d->d_type = DT_DIR;
+            }
+            d->d_namlen = RT_NAME_MAX;
+            d->d_reclen = (rt_uint16_t)sizeof(struct dirent);
+            rt_strncpy(d->d_name, n_file->name, TMPFS_NAME_MAX);
+
+            count += 1;
+            file->fpos += 1;
+        }
+        index += 1;
+        if (index >= end)
+        {
+            break;
+        }
+    }
+    rt_mutex_release(&file->vnode->lock);
+
+    return count * sizeof(struct dirent);
+}
+```
+
+### 37.2.5 truncate 截断文件
+
+```c
+static int dfs_tmpfs_truncate(struct dfs_file *file, off_t offset)
+{
+    d_file = (struct tmpfs_file *)file->vnode->data;
+    superblock = d_file->sb;
+
+    ptr = rt_realloc(d_file->data, offset);
+    rt_spin_lock(&superblock->lock);
+    superblock->df_size = offset;
+    rt_spin_unlock(&superblock->lock);
+
+    /* update d_file and file size */
+    d_file->data = ptr;
+    d_file->size = offset;
+    file->vnode->size = d_file->size;
+    return 0;
+}
+```
+
