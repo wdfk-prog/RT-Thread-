@@ -84,3 +84,5 @@
 - [40 littlefs.md](40 littlefs.md)
 # 41 SDMMC
 - [41 SDMMC.md](41 SDMMC.md)
+# 42 USB
+- [42 USB.md](42 USB.md)
