@@ -10,28 +10,335 @@
 
 ![image-20240815170518414](42%20USB.assets/image-20240815170518414.png)
 
-1. 请求设备描述符
-2. 设备返回设备描述符;
-   - 主机根据获取的类型进行其他的描述符获取
-3. 请求配置描述符,请求9字节
-4. 返回配置描述符
-5. 请求配置描述符,请求75字节
-6. 返回配置描述符及剩下的描述符,共75字节数据
-7. 设置配置描述符,请求9字节
-8. 返回设置完成;设置失败返回STALL,设置成功返回
-9.~ 12. 未知
-13. 请求字符串描述符,请求4字节,索引为2的字符串
-14. 返回索引为2的字符串描述符,由于仅4字节,返回38字节长度+"C"字符串
-15. 重新请求字符串描述符,请求38字节
-16. 返回索引为2的字符串描述符,返回"C.h.e.r.r.y.U.S.B. .C.D.C. .D.E.M.O."
-17. 获取状态请求
-18. 返回状态 0x0000
-19. 设置接口请求
-20. 返回设置状态
-21. 后续为具体功能不熟悉通用的枚举与配置过程
-----------------------
+- 具体枚举配置过程,wireshark抓包不够准确,可以通过打印日志查看
+- 方向分为设备到主机和主机到设备;意思是收到请求后执行的方向
 
-![image-20240815163839733](42%20USB.assets/image-20240815163839733.png)
+1. 请求类型:Standard Device Request 方向:设备到主机 请求:GET_DESCRIPTOR 
+    - wValue 
+        - 描述符类型 :1 (设备描述符) 
+        - 描述符索引: 0 (第一个描述符)
+    - wIndex字段为字符串描述符指定语言ID
+
+```log
+[80 06 00 01 00 00 12 00]
+[23:29:12 571]Setup: bmRequestType 0x80, bRequest 0x06, wValue 0x0100, wIndex 0x0000, wLength 0x0040
+```
+
+2. 回复设备描述符18字节,返回的是IAD描述符
+    - bLength: 0x12 
+    - bDescriptorType: 0x01 (设备描述符)
+    - bcdUSB: 0x0200 (USB2.0)
+    - bDeviceClass: 0xef (Miscellaneous Device Class)
+    - bDeviceSubClass: 0x02 (Common Class Subclass)
+    - bDeviceProtocol: 0x01 (Interface Association Descriptor)
+    - bMaxPacketSize0: 0x40 (64 bytes)
+    - idVendor: 0xffff (供应商 ID)
+    - idProduct: 0xffff (产品 ID)
+    - bcdDevice 0x0100 (设备版本号)
+    - iManufacturer: 0x01 (制造商字符串描述符索引)
+    - iProduct: 0x02 (产品字符串描述符索引)
+    - iSerialNumber: 0x03 (序列号字符串描述符索引)
+    - bNumConfigurations: 0x01 (配置数量)
+```log
+[12 01 00 02 ef 02 01 40 ff ff ff ff 00 01 01 02 03 01]
+[23:29:12 573]EP0 send 18 bytes, 0 remained
+```
+
+3. 请求类型:Standard Device Request 方向:主机到设备 请求:SET_ADDRESS
+    - wValue: 0x001d (地址为29)
+
+```log
+[23:29:12 631]Setup: bmRequestType 0x00, bRequest 0x05, wValue 0x001d, wIndex 0x0000, wLength 0x0000
+[23:29:12 635]EP0 send 0 bytes, 0 remained
+```
+
+4. 请求类型:Standard Device Request 方向:设备到主机 请求:GET_DESCRIPTOR
+    - wValue 
+        - 描述符类型 :1 (设备描述符) 
+        - 描述符索引: 0 (第一个描述符)
+    - wIndex字段为字符串描述符指定语言ID
+
+```log
+[23:29:12 650]Setup: bmRequestType 0x80, bRequest 0x06, wValue 0x0100, wIndex 0x0000, wLength 0x0012
+[23:29:12 653]EP0 send 18 bytes, 0 remained
+```
+
+5. 请求类型:Standard Device Request 方向:设备到主机 请求:GET_DESCRIPTOR
+    - wValue 
+        - 描述符类型 :2 (配置描述符)
+        - 描述符索引: 0 (第一个描述符)
+    - wIndex字段为字符串描述符指定语言ID
+    - wLength: 0x004b (75 bytes)
+
+```log
+[80 06 00 02 00 00 4b 00]
+[23:29:12 670]Setup: bmRequestType 0x80, bRequest 0x06, wValue 0x0200, wIndex 0x0000, wLength 0x004b
+```
+
+6. 回复描述符75字节
+    1. 配置描述符
+    - bLength: 0x09
+    - bDescriptorType: 0x02 (配置描述符)
+    - wTotalLength: 0x004b (配置描述符及其子描述符的总长度)
+    - bNumInterfaces: 0x01 (接口数量)
+    - bConfigurationValue: 0x01 (配置值)
+    - bmAttributes: 0x80 (配置属性)
+        - Bit 6: Self-powered 0:总线供电
+        - Bit 5: Remote Wakeup 0:不支持远程唤醒
+    - bMaxPower: 0x32 (最大功率 单位2mA) 100mA
+    2. 接口描述符
+    - bLength: 0x08
+    - bDescriptorType: 0x0b (接口描述符)
+    - bInterfaceNumber: 0x00 (接口号)
+    - bInterfaceCount: 0x02 (接口数量)
+    - bFunctionClass: 0x02 (Communication Device Class)
+    - bFunctionSubClass: 0x02 (Abstract Control Model)
+    - bFunctionProtocol: 0x01 (ITU-T V.250)
+    - iFunction: 0x00 (接口描述符索引)
+    3. 接口描述符
+    - bLength: 0x09
+    - bDescriptorType: 0x04 (接口描述符)
+    - bInterfaceNumber: 0x00 (接口号)
+    - bAlternateSetting: 0x00 (备用设置)
+    - bNumEndpoints: 0x01 (端点数量)
+    - bInterfaceClass: 0x02 (Communication Device Class)
+    - bInterfaceSubClass: 0x02 (Abstract Control Model)
+    - bInterfaceProtocol: 0x01 (ITU-T V.250)
+    - iInterface: 0x02 (接口描述符索引)
+    4. COMMUNICATION DESCRIPTOR
+    - bLength: 0x05
+    - bDescriptorType: 0x24 (CS_INTERFACE)
+    - bDescriptorSubtype: 0x00 (Header Functional Descriptor)
+    - bcdCDC: 0x0110 (CDC version 1.10)
+    5. COMMUNICATION DESCRIPTOR
+    - bLength: 0x05
+    - bDescriptorType: 0x24 (CS_INTERFACE)
+    - bDescriptorSubtype: 0x01 (Call Management Functional Descriptor)
+    - bmCapabilities: 0x00
+        - Call Management over Data Class Interface: Not supported
+        - Call Management over Communication Class Interface: Not supported
+    - bDataInterface: 0x01 (Data Class Interface)
+    6. COMMUNICATION DESCRIPTOR
+    - bLength: 0x04
+    - bDescriptorType: 0x24 (CS_INTERFACE)
+    - bDescriptorSubtype: 0x02 (Abstract Control Management Functional Descriptor)
+    - bmCapabilities: 0x02
+        - Comm Features Combinations: Not supported
+        - Line Coding and Serial State: Supported
+        - Send Break: Not supported
+        - Network Connection: Not supported
+    7. COMMUNICATION DESCRIPTOR
+    - bLength: 0x05
+    - bDescriptorType: 0x24 (CS_INTERFACE)
+    - bDescriptorSubtype: 0x06 (Union Functional Descriptor)
+    - bControlInterface: 0x00 (Control Class Interface)
+    - bSubordinateInterface0: 0x01 (Data Class Interface)
+    8. ENDPOINT DESCRIPTOR
+    - bLength: 0x07
+    - bDescriptorType: 0x05 (ENDPOINT)
+    - bEndpointAddress: 0x83 (Endpoint 3 IN)
+        - Direction: IN
+        - Number: 3
+    - bmAttributes: 0x03 (Transfer type: Interrupt)
+        - Transactions per microframe: 1 (0)
+    - wMaxPacketSize: 0x0008 (8 bytes)
+    - bInterval: 0x00 (Polling interval in (micro) frames)
+    9. INTERFACE DESCRIPTOR
+    - bLength: 0x09
+    - bDescriptorType: 0x04 (INTERFACE)
+    - bInterfaceNumber: 0x01 (Interface 1)
+    - bAlternateSetting: 0x00 (Alternate setting 0)
+    - bNumEndpoints: 0x02 (2 endpoints)
+    - bInterfaceClass: 0x0a (Data Interface Class)
+    - bInterfaceSubClass: 0x00 (No specific subclass)
+    - bInterfaceProtocol: 0x00 (No specific protocol)
+    - iInterface: 0x00 (No string descriptor)
+    10. ENDPOINT DESCRIPTOR
+    - bLength: 0x07
+    - bDescriptorType: 0x05 (ENDPOINT)
+    - bEndpointAddress: 0x02 (Endpoint 2 OUT)
+        - Direction: OUT
+        - Number: 2
+    - bmAttributes: 0x02 (Transfer type: Bulk)
+        - Transactions per microframe: 1 (0)
+    - wMaxPacketSize: 0x0040 (64 bytes)
+    - bInterval: 0x00 (Polling interval in (micro) frames)
+    11. ENDPOINT DESCRIPTOR
+    - bLength: 0x07
+    - bDescriptorType: 0x05 (ENDPOINT)
+    - bEndpointAddress: 0x81 (Endpoint 1 IN)
+        - Direction: IN
+        - Number: 1
+    - bmAttributes: 0x02 (Transfer type: Bulk)
+        - Transactions per microframe: 1 (0)
+    - wMaxPacketSize: 0x0040 (64 bytes)
+```log
+[09 02 4b 00 02 01 00 80 32]
+[08 0b 00 02 02 02 01 00]
+[09 04 00 00 01 02 02 01 02]
+[05 24 00 10 01]
+[05 24 01 00 01]
+[04 24 02 02]
+[05 24 06 00 01]
+[07 05 83 03 08 00 0a]
+[09 04 01 00 02 0a 00 00 00]
+[07 05 02 02 40 00 00]
+[07 05 81 02 40 00 00]
+[23:29:12 673]EP0 send 64 bytes, 11 remained
+[23:29:12 673]EP0 send 11 bytes, 0 remained
+```
+
+7. 请求类型:Standard Device Request 方向:设备到主机 请求:GET_DESCRIPTOR
+    - wValue 
+        - 描述符类型 :3 (字符串描述符) 
+        - 描述符索引: 3 (第3个描述符)
+    - wIndex字段为字符串描述符指定语言ID 0x0409 (英文)
+
+```log
+[80 06 02 03 09 04 26 00]
+[23:29:12 685]Setup: bmRequestType 0x80, bRequest 0x06, wValue 0x0303, wIndex 0x0409, wLength 0x00ff
+```
+
+- 回复字符串描述符22字节
+    - bLength: 0x16
+    - bDescriptorType: 0x03 (字符串描述符)
+    - bString: "2022123456"
+```log
+[16 03 32 00 32 00 32 00 31 00 32 00 33 00 34 00 35 00 36 00]
+[23:29:12 685]EP0 send 22 bytes, 0 remained
+```
+
+8. 请求类型:Standard Device Request 方向:设备到主机 请求:GET_DESCRIPTOR
+    - wValue 
+        - 描述符类型 :3 (字符串描述符) 
+        - 描述符索引: 0 (第0个描述符)
+    - wIndex字段为字符串描述符指定语言ID 0x0000
+
+```log
+[23:29:12 695]Setup: bmRequestType 0x80, bRequest 0x06, wValue 0x0300, wIndex 0x0000, wLength 0x00ff
+```
+
+- 回复字符串描述符4字节
+    - bLength: 0x04
+    - bDescriptorType: 0x03 (字符串描述符)
+    - bString: 0x0409 (英文)
+```log
+[04 03 09 04]
+[23:29:12 697]EP0 send 4 bytes, 0 remained
+```
+
+9. 请求类型:Standard Device Request 方向:设备到主机 请求:GET_DESCRIPTOR
+    - wValue 
+        - 描述符类型 :3 (字符串描述符) 
+        - 描述符索引: 2 (第2个描述符)
+    - wIndex字段为字符串描述符指定语言ID 0x0409 (英文)
+
+```log
+[23:29:12 706]Setup: bmRequestType 0x80, bRequest 0x06, wValue 0x0302, wIndex 0x0409, wLength 0x00ff
+```
+
+- 回复字符串描述符38字节
+    - bLength: 0x26
+    - bDescriptorType: 0x03 (字符串描述符)
+    - bString: "CherryUSB CDC DEMO"
+```log
+[26 03 43 00 68 00 65 00 72 00 72 00 79 00 55 00 53 00 42 00 20 00 43 00 44 00 43 00 20 00 44 00 45 00 4d 00 4f 00]
+[23:29:12 706]EP0 send 38 bytes, 0 remained
+```
+
+10. 请求类型:Standard Device Request 方向:设备到主机 请求:GET_DESCRIPTOR
+    - wValue 
+        - 描述符类型 :06 (设备限定描述符)
+        - 描述符索引: 0 (第0个描述符)
+- 没有该描述符,回复STALL
+
+```log
+[23:29:12 719]Setup: bmRequestType 0x80, bRequest 0x06, wValue 0x0600, wIndex 0x0000, wLength 0x000a
+```
+
+11. 请求类型:Standard Device Request 方向:设备到主机 请求:SET_CONFIGURATION
+    - wValue: 0x0001 (配置为1)
+
+- 配置对应端点,回复配置状态
+    1. 配置0x03端点方向为OUT,类型为中断,最大包大小为8
+    2. 配置0x02端点方向为OUT,类型为批量,最大包大小为64
+    3. 配置0x01端点方向为IN,类型为批量,最大包大小为64
+
+```log
+[23:29:12 773]Setup: bmRequestType 0x00, bRequest 0x09, wValue 0x0001, wIndex 0x0000, wLength 0x0000
+[23:29:12 782]Open ep:0x83 type:3 mps:8
+[23:29:12 782]Open ep:0x02 type:2 mps:64
+[23:29:12 790]Open ep:0x81 type:2 mps:64
+[23:29:12 790]EP0 send 0 bytes, 0 remained
+```
+
+12. 请求类型: Class Interface Request 方向:设备到主机 请求:GET_LINE_CODING
+    - wValue: 0x0000
+    - wIndex: 0x0000
+    - wLength: 0x0007
+    - bRequest 0x21
+
+- 回复波特率:2000000,停止位:1,校验位:0,数据位:8
+
+```log
+[a1 21 00 00 00 00 07 00]
+[23:29:12 845]Setup: bmRequestType 0xa1, bRequest 0x21, wValue 0x0000, wIndex 0x0000, wLength 0x0007
+[23:29:12 849]CDC Class request: bRequest 0x21
+[23:29:12 852]Get intf:0 linecoding 2000000 0 0 8
+[80 84 1e 00 00 00 08]
+[23:29:12 855]EP0 send 7 bytes, 0 remained
+```
+
+13.  请求类型: Class Interface Request 方向:设备到主机 请求:SET_CONTROL_LINE_STATE
+    - wValue: 0x0000
+    - wIndex: 0x0000
+    - wLength: 0x0007
+    - bRequest 0x20
+
+- 设置DTR和RTS
+
+```log
+[21 22 00 00 00 00 00 00]
+[23:29:12 877]Setup: bmRequestType 0x21, bRequest 0x22, wValue 0x0000, wIndex 0x0000, wLength 0x0000
+[23:29:12 880]CDC Class request: bRequest 0x22
+[23:29:12 885]Set intf:0 DTR 0x0,RTS 0x0
+[23:29:12 887]EP0 send 0 bytes, 0 remained
+```
+
+14. 请求类型: Class Interface Request 方向:主机到设备 请求:SET_LINE_CODING
+    - wValue: 0x0000
+    - wIndex: 0x0000
+    - wLength: 0x0007
+    - bRequest 0x20
+
+- 执行接收,配置波特率:2000000,停止位:1,校验位:0,数据位:8
+
+```log
+[23:29:12 897]Setup: bmRequestType 0x21, bRequest 0x20, wValue 0x0000, wIndex 0x0000, wLength 0x0007
+[23:29:12 901]Start reading 7 bytes from ep0
+[80 84 1e 00 00 00 08]
+[23:29:12 903]EP0 recv 7 bytes, 0 remained
+[23:29:12 912]CDC Class request: bRequest 0x20
+[23:29:12 912]Set intf:0 linecoding <2000000 8 N 1>
+[23:29:12 914]EP0 send 0 bytes, 0 remained
+```
+
+15. 请求类型: Class Interface Request 方向:主机到设备 请求:SET_CONTROL_LINE_STATE
+    - wValue: 0x0002
+    - wIndex: 0x0000
+    - wLength: 0x0000
+    - bRequest 0x22
+
+- 设置DTR和RTS(串口助手开启关闭串口发送此命令,MCU可通过该命令实现同步开启输出或关闭)
+    - DTR:0
+    - RTS:1
+
+```log
+[23:29:18 841] [I/USB] Setup: bmRequestType 0x21, bRequest 0x22, wValue 0x0002, wIndex 0x0000, wLength 0x0000
+[23:29:18 846] [D/USB] CDC Class request: bRequest 0x22
+[23:29:18 849] [D/USB] Set intf:0 DTR 0x0,RTS 0x1
+[23:29:18 853] [D/USB] EP0 send 0 bytes, 0 remained
+```
 
 ### 42.0.1.1 Endpoint
 
@@ -81,18 +388,6 @@ Bits 5..4:使用类型:00 =数据端点;01 =反馈端点;10 =隐式反馈数据�
 ![image-20240813175153704](42%20USB.assets/image-20240813175153704.png)
 
 ![image-20240815104039529](42%20USB.assets/image-20240815104039529.png)
-
-#### 42.0.1.2.1 GET_DESCRIPTOR 0x06
-
-- 80 06 00 01 00 00 12 00
-- 80: 10000000,方向为设备到主机,请求类型为标准请求,接收方为设备
-- 06: GET_DESCRIPTOR
-- 00: 描述符索引
-- 01: 描述符类型
-- 00 00: ID
-- 12 00: 描述符长度 18
-
-![image-20240815104111721](42%20USB.assets/image-20240815104111721.png)
 
 ### 42.0.1.3 描述符
 
@@ -737,6 +1032,17 @@ void usbd_event_ep0_in_complete_handler(uint8_t busid, uint8_t ep, uint32_t nbyt
 
 - 同`usbd_event_ep0_in_complete_handler`流程
 
+## 42.2.12 usbd_set_address
+
+```c
+int usbd_set_address(uint8_t busid, const uint8_t addr)
+{
+    USB_OTG_DEV->DCFG &= ~(USB_OTG_DCFG_DAD);
+    USB_OTG_DEV->DCFG |= ((uint32_t)addr << 4) & USB_OTG_DCFG_DAD;
+    return 0;
+}
+```
+
 # 42.3 device
 
 ![_images/usbdev.svg](42%20USB.assets/usbdev.svg)
@@ -881,6 +1187,13 @@ void usbd_event_reset_handler(uint8_t busid)
 
 ###### 42.3.1.8.1.1.4 USB_REQUEST_SET_ADDRESS 0x05 设置设备地址
 
+- 调用IP层设置设备地址
+
+```c
+    usbd_set_address(busid, value);
+    *len = 0;
+```
+
 ###### 42.3.1.8.1.1.5 USB_REQUEST_GET_DESCRIPTOR 0x06 获取描述符
 
 - 执行`ret = usbd_get_descriptor(busid, value, data, len);`
@@ -952,6 +1265,11 @@ static bool usbd_get_descriptor(uint8_t busid, uint16_t type_index, uint8_t **da
 
 - `wValue`字段的下一个字节指定所需的配置。此配置值必须为零或与配置描述符中的配置值匹配。如果配置值为零，则设备处于地址状态。保留wValue字段的上一个字节。
 
+- `usbd_set_configuration`执行流程
+    1. 遍历全局描述符,找到配置描述符,标记为`found`
+    2. 找到接口描述符,记录`cur_alt_setting`
+    3. 找打端点描述符,匹配配置和接口,执行`usbd_set_endpoint`
+
 ```c
     value &= 0xFF;
 
@@ -965,24 +1283,67 @@ static bool usbd_get_descriptor(uint8_t busid, uint16_t type_index, uint8_t **da
     *len = 0;
 ```
 
-1. USB_DESCRIPTOR_TYPE_CONFIGURATION
-
-- 找到配置描述符,并且索引与配置索引相同描述符
 
 ```c
-if (cur_config == config_index) {
-    found = true;
+static bool usbd_set_configuration(uint8_t busid, uint8_t config_index, uint8_t alt_setting)
+{
+    uint8_t cur_alt_setting = 0xFF;
+    uint8_t cur_config = 0xFF;
+    bool found = false;
+    const uint8_t *p;
+    uint32_t desc_len = 0;
+    uint32_t current_desc_len = 0;
 
-    current_desc_len = 0;
-    desc_len = (p[CONF_DESC_wTotalLength]) |
-                (p[CONF_DESC_wTotalLength + 1] << 8);
+    p = (uint8_t *)g_usbd_core[busid].descriptors;
+
+    /* configure endpoints for this configuration/altsetting */
+    while (p[DESC_bLength] != 0U) {
+        switch (p[DESC_bDescriptorType]) {
+            case USB_DESCRIPTOR_TYPE_CONFIGURATION:
+                /* remember current configuration index */
+                cur_config = p[CONF_DESC_bConfigurationValue];
+
+                if (cur_config == config_index) {
+                    found = true;
+
+                    current_desc_len = 0;
+                    desc_len = (p[CONF_DESC_wTotalLength]) |
+                               (p[CONF_DESC_wTotalLength + 1] << 8);
+                }
+
+                break;
+
+            case USB_DESCRIPTOR_TYPE_INTERFACE:
+                /* remember current alternate setting */
+                cur_alt_setting =
+                    p[INTF_DESC_bAlternateSetting];
+                break;
+
+            case USB_DESCRIPTOR_TYPE_ENDPOINT:
+                if ((cur_config != config_index) ||
+                    (cur_alt_setting != alt_setting)) {
+                    break;
+                }
+
+                found = usbd_set_endpoint(busid, (struct usb_endpoint_descriptor *)p);
+                break;
+
+            default:
+                break;
+        }
+
+        /* skip to next descriptor */
+        p += p[DESC_bLength];
+        current_desc_len += p[DESC_bLength];
+        if (current_desc_len >= desc_len && desc_len) {
+            break;
+        }
+    }
+
+    return found;
 }
-
 ```
 
-2. USB_DESCRIPTOR_TYPE_INTERFACE
-
-3. USB_DESCRIPTOR_TYPE_ENDPOINT
 
 
 ###### 42.3.1.8.1.1.9  USB_REQUEST_GET_INTERFACE 0x0A 获取接口
@@ -1020,6 +1381,29 @@ if (cur_config == config_index) {
 ##### 42.3.1.8.4 USB_REQUEST_RECIPIENT_ENDPOINT 0x02 端点
 
 #### 42.3.1.8.3 USB_REQUEST_VENDOR 0x2 厂商
+
+### 42.3.1.9 usbd_set_endpoint
+
+```c
+static bool usbd_set_endpoint(uint8_t busid, const struct usb_endpoint_descriptor *ep)
+{
+    USB_LOG_DBG("Open ep:0x%02x type:%u mps:%u\r\n",
+                 ep->bEndpointAddress,
+                 USB_GET_ENDPOINT_TYPE(ep->bmAttributes),
+                 USB_GET_MAXPACKETSIZE(ep->wMaxPacketSize));
+
+    if (ep->bEndpointAddress & 0x80) {
+        g_usbd_core[busid].tx_msg[ep->bEndpointAddress & 0x7f].ep_mps = USB_GET_MAXPACKETSIZE(ep->wMaxPacketSize);  //设置发送端点最大包大小
+        g_usbd_core[busid].tx_msg[ep->bEndpointAddress & 0x7f].ep_mult = USB_GET_MULT(ep->wMaxPacketSize);          //设置发送端点多包
+    } else {
+        g_usbd_core[busid].rx_msg[ep->bEndpointAddress & 0x7f].ep_mps = USB_GET_MAXPACKETSIZE(ep->wMaxPacketSize);  //设置接收端点最大包大小
+        g_usbd_core[busid].rx_msg[ep->bEndpointAddress & 0x7f].ep_mult = USB_GET_MULT(ep->wMaxPacketSize);          //设置接收端点多包
+    }
+
+    return usbd_ep_open(busid, ep) == 0 ? true : false;
+}
+```
+
 
 ## 42.3.2 CDC (Communication Device Class)
 
