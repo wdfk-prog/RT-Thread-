@@ -1488,6 +1488,7 @@ void cdc_acm_init(uint8_t busid, uint32_t reg_base)
 1. 设备描述符:USB2.0,基类为多功能设备类,IAD.(接口关联描述符)
 2. 配置描述符:接口数为2,配置值为1,属性为总线供电,最大功率为100mA
 3. CDC ACM 描述符:接口数为2,类为CDC,子类为ACM,协议为V.25ter,最大包大小为64
+4. 第一个字符串描述符为厂商描述符, 第二个字符串描述符为产品描述符, 第三个字符串描述符为序列号描述符
 
 ```c
 /*!< global descriptor */
@@ -1833,3 +1834,1531 @@ void cdc_acm_data_send_with_dtr_test(uint8_t busid)
 ##### 42.3.2.3.1.2 Union Functional Descriptor
 - 联合功能描述符描述了一组接口之间的关系，这些接口可以被认为是一个功能单元。它只能发生在类特定部分描述符。
 - 组中的一个接口被指定为组的主接口或控制接口，并且某些特定于类的消息可以发送到该接口以对整个组起作用。类似地，整个组的通知可以从该接口发送，但适用于整个组的接口。该组中的接口可以包括通信、数据或任何其他有效的USB接口类(包括但不限于音频、HID和监视器)。
+
+## 42.3.3 MSC (Mass Storage Class)
+
+### 42.3.3.3.1 抓包
+
+#### 42.3.3.3.1.1 枚举过程
+
+1. 忽略设备描述符及字符串描述符请求和回应过程
+2. 主机发送`GET CONFIGURATION Request` 获取配置描述符
+    - 配置端点
+    - 执行`usbd_class_event_notify_handler(busid, USBD_EVENT_CONFIGURED, NULL);`,执行`msc_storage_notify_handler`
+    - 开始读取CBW,MSC Bulk-Only Command Block Wrapper (CBW),存储至`g_usbd_msc[busid].cbw`
+    - `stage`状态 = MSC_READ_CBW;
+```log
+[15:58:27] [412][I/USB] Setup: bmRequestType 0x00, bRequest 0x09, wValue 0x0001, wIndex 0x0000, wLength 0x0000
+[15:58:27] [412][D/USB] Open ep:0x02 type:2 mps:64
+[15:58:27] [412][D/USB] Open ep:0x81 type:2 mps:64
+[15:58:27] [412][D/USB] Start reading cbw
+```
+
+3. 请求类型: Class Interface Request, 方向主机到设备, 请求:Get Max LUN (GML)
+    - 回复`0`lun
+
+```log
+[a1 fe 00 00 00 00 01 00]
+[15:58:27] [431]USB confi[I/USB] Setup: bmRequestType 0xa1, bRequest 0xfe, wValue 0x0000, wIndex 0x0000, wLength 0x0001
+[15:58:27] [431][D/USB] MSC Class request: bRequest 0xfe
+[00]
+[15:58:27] [431][D/USB] EP0 send 1 bytes, 0 remained
+[15:58:27] [447][D/USB] EP0 recv out status
+```
+
+4. 主机通过端点2发送CBW, SCSI: Inquiry LUN: 0x00 
+    - Signature: 0x43425355 签名
+    - Tag: 0x16db9010
+    - Data Transfer Length: 36
+    - flag: 0x80
+        - target: 0x00
+        - lun: 0x00
+        - CDB Length: 6
+    - CDB: 0x12
+
+```log
+[55 53 42 43 10 90 db 16 24 00 00 00 80 00 06 12 00 00 24 00 00 00 00 00 00 00 00 00 00 00]
+[2024/8/17 15:58:27] [448][D/USB] Decode CB:0x12
+```
+
+5. 解码SCSI命令,执行`SCSI_inquiry`,回复设备信息
+    - 外设限定符: 0x00 , 设备类型连接到逻辑单元
+    - 设备类型: 0x00 , 直接访问设备(磁盘)
+    - RMB: 0x01 , 可移动介质
+    - Device-type modifier: 0x00 不支持
+    - ISO/IEC 646: 0x02 , ASCII
+    - Response data format: 0x01 , ACSI-2
+    - Additional Length: 0x1f , 31 bytes
+    - Vendor ID: "        "
+    - Product ID: "        "
+    - Product Revision: "0.01"
+    - 回复长度: 36
+
+```log
+[00 80 02 02 1f 00 00 00 20 20 20 20 20 20 20 20 0 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 30 2e 30 31]
+[2024/8/17 15:58:27] [448][D/USB] Send info len:36
+```
+
+6. 设备通过端点1发送CSW状态(good),转入`MSC_READ_CBW`状态
+    - Signature: 0x53425355
+    - Tag: 0x16db9010
+    - dDataResidue: 0, 预期与实际数据长度差异
+    - Status: 0x00 (Passed[good])
+
+```log
+[55 53 42 53 10 90 db 16 00 00 00 00 00]
+[15:58:27] [448] [D/USB] Send csw
+[15:58:27] [448]S[D/USB] Start reading cbw
+```
+
+7. 主机通过端点2发送CBW, SCSI Command: 0x23(READ FORMAT CAPACITIES) LUN:0x00 
+    - Signature: 0x43425355 签名
+    - Tag: 0x0d89a010
+    - Data Transfer Length: 252
+    - flag: 0x80
+        - target: 0x00
+        - lun: 0x00
+        - CDB Length: 10
+    - CDB: 0x23 READ FORMAT CAPACITIES
+        - LUN: 0x00
+        - Allocation Length: 0xfc = 252
+
+    - 设备回复容量信息(512字节块,1000块)= 512KB
+        - Capacity List Length: 8
+        - Number of blocks: 0x000003e8 = 1000
+        - Desc Type: 0x02 = 可格式化设备
+        - Block Length: 0x200 = 512
+
+    SW状态(GOOD),转入`MSC_READ_CBW`状态
+
+```log
+[55 53 42 43 10 a0 89 0d fc 00 00 00 80 00 0a 23 00 00 00 00 00 00 00 fc 00 00 00 00 00 00 00]
+[15:58:27] [466][D/USB] Decode CB:0x23
+
+[00 00 00 08 00 00 03 e8 02 00 02 00]
+[15:58:27] [466][D/USB] Send info len:12
+
+[55 53 42 53 10 a0 89 0d f0 00 00 00 00]
+[15:58:27] [466][D/USB] Send csw
+
+[15:58:27] [466][D/USB] Start reading cbw
+```
+
+8. 主机通过端点2发送CBW, SCSI Command: 0x25(READ CAPACITY) LUN:0x00 
+    - Signature: 0x43425355 签名
+    - Tag: 0x17db9010
+    - Data Transfer Length: 8
+    - flag: 0x80
+        - target: 0x00
+        - lun: 0x00
+        - CDB Length: 10
+    - CDB: 0x25 READ CAPACITY
+        - LUN: 0x00
+        - RelAdr: 0x00
+        - Logical Block Address: 0x00000000
+        - PMI: 0x00
+
+    - 设备回复容量信息(512字节块,1000块)= 512KB
+        - Last Logical Block Address: 0x000003e7 = 999
+        - Block Length: 0x200 = 512
+
+```log
+[55 53 42 43 10 d0 0e 17 08 00 00 00 80 00 0a 25 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[15:58:27] [502][D/USB] Decode CB:0x25
+
+[00 00 03 e7 00 00 02 00]
+[15:58:27] [502][D/USB] Send info len:8
+
+[15:58:27] [550][D/USB] Send csw
+[15:58:27] [662][D/USB] Start reading cbw
+```
+
+9. 主机通过端点2发送CBW, SCSI Command: 0x1A(MODE SENSE(6)) LUN:0x00
+    - Signature: 0x43425355 签名
+    - Tag: 0x16db9010
+    - Data Transfer Length: 192
+    - flag: 0x80
+        - target: 0x00
+        - lun: 0x00
+        - CDB Length: 6
+    - CDB: 0x1A MODE SENSE(6)
+        - LUN: 0x00
+        - DBD: 0x00
+        - ALLOCATE LENGTH: 192
+        - Control: 0x00
+    - 回复设备信息
+        - Mode Data Length: 0x00
+        - Medium Type: 0x00
+        - Device-Specific Parameter: 0x00
+        - Block Descriptor Length: 0x00
+
+```log
+[55 53 42 43 10 40 ff 16 c0 00 00 00 80 00 06 1a 00 1c 00 c0 00 00 00 00 00 00 00 00 00 00 00]
+[15:58:27] [662][D/USB] Decode CB:0x1a
+
+[03 00 00 00]
+[15:58:27] [662][D/USB] Send info len:4
+[15:58:27] [662][D/USB] Send csw
+[15:58:27] [662][D/USB] Start reading cbw
+```
+
+10. 主机通过端点2发送CBW, SCSI Command: 0X28(READ(10)) LUN:0x00
+    - Signature: 0x43425355 签名
+    - Tag: 0X1405b290
+    - Data Transfer Length: 512
+    - flag: 0x80
+        - target: 0x00
+        - lun: 0x00
+        - CDB Length: 10
+    - CDB: 0x28 READ(10)
+        - LUN: 0x00
+        - rdprotect: 0x00
+        - dpo: 0x00
+        - fua: 0x00
+        - rarc: 0x00
+        - Logical Block Address: 0x00000000
+        - Group Number: 0x00
+        - Transfer Length: 1
+        - Control: 0x00
+
+    - 回复返回所需LBA地址数据
+
+```log
+[55 53 42 43 90 b2 05 14 00 02 00 00 80 00 0a 28 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00]
+[15:58:27] [687][D/USB] Decode CB:0x28
+[15:58:27] [687][D/USB] lba: 0x0000 //读取的逻辑块地址
+[15:58:27] [687][D/USB] nsectors: 0x01 //读取的扇区数
+[15:58:27] [687][D/USB] read lba:0
+
+[0000   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0010   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0020   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0030   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0040   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0050   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0060   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0070   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0080   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0090   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[00a0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[00b0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[00c0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[00d0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[00e0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[00f0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0100   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0110   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0120   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0130   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0140   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0150   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0160   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0170   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0180   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[0190   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[01a0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[01b0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[01c0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[01d0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[01e0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[01f0   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+
+[15:58:27] [687][D/USB] Send csw
+[15:58:27] [687][D/USB] Start reading cbw
+```
+
+11. 读取lba:2的数据,读取0~15块数据
+- 应该是获取MBR分区信息和FAT表信息
+
+```log
+144 [2024/8/17 15:58:27] [746][D/USB] Decode CB:0x28
+145 [2024/8/17 15:58:27] [746][D/USB] lba: 0x0002
+146 [2024/8/17 15:58:27] [746][D/USB] nsectors: 0x01
+147 [2024/8/17 15:58:27] [757][D/USB] read lba:2
+
+209 [2024/8/17 15:58:27] [915][D/USB] Decode CB:0x28
+210 [2024/8/17 15:58:27] [915][D/USB] lba: 0x0000
+211 [2024/8/17 15:58:27] [928][D/USB] nsectors: 0x10
+212 [2024/8/17 15:58:27] [928][D/USB] read lba:0
+213 [2024/8/17 15:58:27] [928][D/USB] read lba:1
+214 [2024/8/17 15:58:27] [928][D/USB] read lba:2
+215 [2024/8/17 15:58:27] [928][D/USB] read lba:3
+216 [2024/8/17 15:58:27] [939][D/USB] read lba:4
+217 [2024/8/17 15:58:27] [939][D/USB] read lba:5
+218 [2024/8/17 15:58:27] [939][D/USB] read lba:6
+219 [2024/8/17 15:58:27] [939][D/USB] read lba:7
+220 [2024/8/17 15:58:27] [953][D/USB] read lba:8
+221 [2024/8/17 15:58:27] [953][D/USB] read lba:9
+222 [2024/8/17 15:58:27] [953][D/USB] read lba:10
+223 [2024/8/17 15:58:27] [953][D/USB] read lba:11
+224 [2024/8/17 15:58:27] [953][D/USB] read lba:12
+225 [2024/8/17 15:58:27] [965][D/USB] read lba:13
+226 [2024/8/17 15:58:27] [965][D/USB] read lba:14
+227 [2024/8/17 15:58:27] [965][D/USB] read lba:15
+```
+
+12. 主机通过端点2发送CBW, SCSI Command: 0x00(TEST UNIT READY) LUN:0x00
+    - 回复(Test Unit Ready) (Good)
+
+```log
+[55 53 42 43 10 30 50 1d 00 00 00 00 00 00 06 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+[2024/8/18 15:24:43] [240][I/USB] Decode CB:0x00
+[55 53 42 53 10 30 50 1d 00 00 00 00 00]
+```
+
+13. 发送CBW, SCSI Command: 0x1e(PREVENT-ALLOW MEDIUM REMOVAL) LUN:0x00
+    - Prevent Allow Flags: 0x00 不允许移除
+    - 回复(Prevent/Allow Medium Removal) (Good)
+    发送CBW, SCSI Command: 0x1e(PREVENT-ALLOW MEDIUM REMOVAL) LUN:0x00
+    - Prevent Allow Flags: 0x01 允许移除
+    - 回复(Prevent/Allow Medium Removal) (Good)
+
+```log
+[55 53 42 43 60 95 ca 16 00 00 00 00 00 00 06 1e 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00]
+ 211 [2024/8/18 15:24:43] [645][I/USB] Decode CB:0x1e
+ 212 [2024/8/18 15:24:43] [645][I/USB] Decode CB:0x1e
+[55 53 42 43 60 95 ca 16 00 00 00 00 00 00 06 1e 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+```
+
+#### 42.3.3.3.1.2 数据交互过程
+
+##### 不断读取LBA分区数据(wireshark抓包导致)
+
+-  event:2 MSC_DATA_IN事件
+- ?可能是未格式化缘故
+
+```log
+1647 [2024/8/18 15:17:42] [766][I/USB] read lba:64
+1648 [2024/8/18 15:17:42] [766][I/USB] event:2
+1649 [2024/8/18 15:17:42] [766][I/USB] read lba:65
+1650 [2024/8/18 15:17:42] [766][I/USB] event:2
+1651 [2024/8/18 15:17:42] [766][I/USB] read lba:66
+1652 [2024/8/18 15:17:42] [778][I/USB] event:2
+1653 [2024/8/18 15:17:42] [778][I/USB] read lba:67
+```
+
+##### 执行格式化操作
+
+1. 发送CBW, SCSI Command: 0x2a(WRITE(10)) LUN:0X00
+    - Signature: 0x43425355 签名
+    - Tag: 0X12B1C010
+    - Data Transfer Length: 512
+    - flag: 0x00
+        - target: 0x00
+        - lun: 0x00
+        - CDB Length: 10
+    - CDB: 0x2a WRITE(10)
+        - LUN: 0x00
+        - wrprotect: 0x00
+        - dpo: 0x00
+        - fua: 0x00
+        - rarc: 0x00
+        - Logical Block Address: 0x00000000
+        - Group Number: 0x00
+        - Transfer Length: 1
+        - Control: 0x00
+2. 对扇区写入数据
+3. 设备回复good
+4. 主机使用read(10)读取写入扇区数据,确保写入成功
+
+```log
+[55 53 42 43 10 c0 b1 12 00 02 00 00 00 00 0a 2a 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00]
+[16:16:11] [896][I/USB] Decode CB:0x2a
+[16:16:11] [896][I/USB] lba: 0x0000
+[16:16:11] [903][I/USB] nsectors: 0x01
+[16:16:11] [903][I/USB] event:1
+
+// 主机传输写入数据
+0000   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0010   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0020   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0030   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0040   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0050   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0060   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0070   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0080   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0090   00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00a0   00 00 00 00 00 00 00 00 00 00 7a 00 68 00 2d 00
+00b0   43 00 4e 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+5. 写入末尾扇区数据,回复good,写入全0
+
+```log
+[16:16:11] [903][I/USB] Decode CB:0x2a
+[16:16:11] [909][I/USB] lba: 0x03e7
+[16:16:11] [909][I/USB] nsectors: 0x01
+```
+
+6. 写入LBA2,3个扇区数据;写入LBA5,三个扇区数据
+
+```log
+[2024/8/18 16:16:11] [915][I/USB] Decode CB:0x2a
+[2024/8/18 16:16:11] [915][I/USB] lba: 0x0002
+[2024/8/18 16:16:11] [915][I/USB] nsectors: 0x03
+[2024/8/18 16:16:11] [927][I/USB] Decode CB:0x2a
+[2024/8/18 16:16:11] [927][I/USB] lba: 0x0005
+[2024/8/18 16:16:11] [935][I/USB] nsectors: 0x03
+
+0000   f8 ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+7. 写入LBA8,32个扇区数据;写入全零数据
+
+```log
+[16:16:11] [941][I/USB] Decode CB:0x2a
+[16:16:11] [941][I/USB] lba: 0x0008
+[16:16:11] [949][I/USB] nsectors: 0x20
+```
+
+#### 42.3.3.3.1.3 数据写入过程(创建文本)
+1. 创建FAT12文件系统,写入MBR数据,对LBA0~1扇区写入数据
+    - LBA0扇区末尾: 55 aa
+    - 引导代码: 位于数据的前446字节，用于启动操作系统。
+    - 分区表: 包含四个分区条目，每个条目16字节，总共64字节。每个条目描述一个分区的起始和结束位置、类型等信息。
+    - 引导标志: 位于数据的最后两个字节（0x55AA），表示这是一个有效的MBR。
+
+```log
+[16:16:12] [033][I/USB] Decode CB:0x2a
+[16:16:12] [033][I/USB] lba: 0x0000
+[16:16:12] [046][I/USB] nsectors: 0x02
+0000   eb 3c 90 4d 53 44 4f 53 35 2e 30 00 02 01 02 00   .<.MSDOS5.0.....
+0010   02 00 02 e8 03 f8 03 00 01 00 01 00 00 00 00 00   ................
+0020   00 00 00 00 80 00 29 55 fa e2 ea 4e 4f 20 4e 41   ......)U...NO NA
+0030   4d 45 20 20 20 20 46 41 54 31 32 20 20 20 33 c9   ME    FAT12   3.
+0040   8e d1 bc f0 7b 8e d9 b8 00 20 8e c0 fc bd 00 7c   ....{.... .....|
+0050   38 4e 24 7d 24 8b c1 99 e8 3c 01 72 1c 83 eb 3a   8N$}$....<.r...:
+0060   66 a1 1c 7c 26 66 3b 07 26 8a 57 fc 75 06 80 ca   f..|&f;.&.W.u...
+0070   02 88 56 02 80 c3 10 73 eb 33 c9 8a 46 10 98 f7   ..V....s.3..F...
+0080   66 16 03 46 1c 13 56 1e 03 46 0e 13 d1 8b 76 11   f..F..V..F....v.
+0090   60 89 46 fc 89 56 fe b8 20 00 f7 e6 8b 5e 0b 03   `.F..V.. ....^..
+00a0   c3 48 f7 f3 01 46 fc 11 4e fe 61 bf 00 00 e8 e6   .H...F..N.a.....
+00b0   00 72 39 26 38 2d 74 17 60 b1 0b be a1 7d f3 a6   .r9&8-t.`....}..
+00c0   61 74 32 4e 74 09 83 c7 20 3b fb 72 e6 eb dc a0   at2Nt... ;.r....
+00d0   fb 7d b4 7d 8b f0 ac 98 40 74 0c 48 74 13 b4 0e   .}.}....@t.Ht...
+00e0   bb 07 00 cd 10 eb ef a0 fd 7d eb e6 a0 fc 7d eb   .........}....}.
+00f0   e1 cd 16 cd 19 26 8b 55 1a 52 b0 01 bb 00 00 e8   .....&.U.R......
+0100   3b 00 72 e8 5b 8a 56 24 be 0b 7c 8b fc c7 46 f0   ;.r.[.V$..|...F.
+0110   3d 7d c7 46 f4 29 7d 8c d9 89 4e f2 89 4e f6 c6   =}.F.)}...N..N..
+0120   06 96 7d cb ea 03 00 00 20 0f b6 c8 66 8b 46 f8   ..}..... ...f.F.
+0130   66 03 46 1c 66 8b d0 66 c1 ea 10 eb 5e 0f b6 c8   f.F.f..f....^...
+0140   4a 4a 8a 46 0d 32 e4 f7 e2 03 46 fc 13 56 fe eb   JJ.F.2....F..V..
+0150   4a 52 50 06 53 6a 01 6a 10 91 8b 46 18 96 92 33   JRP.Sj.j...F...3
+0160   d2 f7 f6 91 f7 f6 42 87 ca f7 76 1a 8a f2 8a e8   ......B...v.....
+0170   c0 cc 02 0a cc b8 01 02 80 7e 02 0e 75 04 b4 42   .........~..u..B
+0180   8b f4 8a 56 24 cd 13 61 61 72 0b 40 75 01 42 03   ...V$..aar.@u.B.
+0190   5e 0b 49 75 06 f8 c3 41 bb 00 00 60 66 6a 00 eb   ^.Iu...A...`fj..
+01a0   b0 42 4f 4f 54 4d 47 52 20 20 20 20 0d 0a 52 65   .BOOTMGR    ..Re
+01b0   6d 6f 76 65 20 64 69 73 6b 73 20 6f 72 20 6f 74   move disks or ot
+01c0   68 65 72 20 6d 65 64 69 61 2e ff 0d 0a 44 69 73   her media....Dis
+01d0   6b 20 65 72 72 6f 72 ff 0d 0a 50 72 65 73 73 20   k error...Press 
+01e0   61 6e 79 20 6b 65 79 20 74 6f 20 72 65 73 74 61   any key to resta
+01f0   72 74 0d 0a 00 00 00 00 00 00 00 ac cb d8 55 aa   rt............U.
+```
+
+2. 写入根目录数据,对LBA8~16扇区写入数据
+
+```log
+[16:16:12] [068][I/USB] Decode CB:0x2a
+[16:16:12] [068][I/USB] lba: 0x0008
+[16:16:12] [082][I/USB] nsectors: 0x08
+
+0000   42 20 00 49 00 6e 00 66 00 6f 00 0f 00 72 72 00   B .I.n.f.o...rr.
+0010   6d 00 61 00 74 00 69 00 6f 00 00 00 6e 00 00 00   m.a.t.i.o...n...
+0020   01 53 00 79 00 73 00 74 00 65 00 0f 00 72 6d 00   .S.y.s.t.e...rm.
+0030   20 00 56 00 6f 00 6c 00 75 00 00 00 6d 00 65 00    .V.o.l.u...m.e.
+0040   53 59 53 54 45 4d 7e 31 20 20 20 16 00 06 06 82   SYSTEM~1   .....
+0050   12 59 12 59 00 00 07 82 12 59 02 00 00 00 00 00   .Y.Y.....Y......
+```
+
+3. 写入数据内容,对LBA28~29扇区写入数据
+
+```log
+[16:16:12] [120][I/USB] Decode CB:0x2a
+[16:16:12] [120][I/USB] lba: 0x0028
+[16:16:12] [120][I/USB] nsectors: 0x01
+写入LAB28扇区数据
+0000   1b 00 40 e5 1d 12 83 e6 ff ff 00 00 00 00 09 00   ..@.............
+0010   00 01 00 0b 00 02 03 00 02 00 00 2e 20 20 20 20   ............    
+0020   20 20 20 20 20 20 10 00 06 06 82 12 59 12 59 00         ......Y.Y.
+0030   00 07 82 12 59 02 00 00 00 00 00 2e 2e 20 20 20   ....Y........   
+0040   20 20 20 20 20 20 10 00 06 06 82 12 59 12 59 00         ......Y.Y.
+0050   00 07 82 12 59 00 00 00 00 00 00 42 74 00 00 00   ....Y......Bt...
+0060   ff ff ff ff ff ff 0f 00 ce ff ff ff ff ff ff ff   ................
+0070   ff ff ff ff ff 00 00 ff ff ff ff 01 57 00 50 00   ............W.P.
+0080   53 00 65 00 74 00 0f 00 ce 74 00 69 00 6e 00 67   S.e.t....t.i.n.g
+0090   00 73 00 2e 00 00 00 64 00 61 00 57 50 53 45 54   .s.....d.a.WPSET
+00a0   54 7e 31 44 41 54 20 00 0a 06 82 12 59 12 59 00   T~1DAT .....Y.Y.
+00b0   00 07 82 12 59 03 00 0c 00 00 00 42 47 00 75 00   ....Y......BG.u.
+00c0   69 00 64 00 00 00 0f 00 ff ff ff ff ff ff ff ff   i.d.............
+00d0   ff ff ff ff ff 00 00 ff ff ff ff 01 49 00 6e 00   ............I.n.
+00e0   64 00 65 00 78 00 0f 00 ff 65 00 72 00 56 00 6f   d.e.x....e.r.V.o
+00f0   00 6c 00 75 00 00 00 6d 00 65 00 49 4e 44 45 58   .l.u...m.e.INDEX
+0100   45 7e 31 20 20 20 20 00 1a 07 82 12 59 12 59 00   E~1    .....Y.Y.
+0110   00 08 82 12 59 04 00 4c 00 00 00 00 00 00 00 00   ....Y..L........
+
+[16:16:12] [150][I/USB] Decode CB:0x2a
+[16:16:12] [150][I/USB] lba: 0x0029
+[16:16:12] [150][I/USB] nsectors: 0x01
+
+0000   1b 00 40 e5 1d 12 83 e6 ff ff 00 00 00 00 09 00   ..@.............
+0010   00 01 00 0b 00 02 03 00 02 00 00 0c 00 00 00 31   ...............1
+0020   30 eb e4 b1 a8 94 17 00 00 00 00 00 00 00 00 00   0...............
+```
+
+4. 写入文件数据,对LBA42扇区写入数据
+
+    - {7A10627C-EB63-4B65-B8F5-3C36782DF3DF}
+    - 写入GUID （全局唯一标识符）
+
+```log
+0000   7b 00 37 00 41 00 31 00 30 00 36 00 32 00 37 00   {.7.A.1.0.6.2.7.
+0010   43 00 2d 00 45 00 42 00 36 00 33 00 2d 00 34 00   C.-.E.B.6.3.-.4.
+0020   42 00 36 00 35 00 2d 00 42 00 38 00 46 00 35 00   B.6.5.-.B.8.F.5.
+0030   2d 00 33 00 43 00 33 00 36 00 37 00 38 00 32 00   -.3.C.3.6.7.8.2.
+0040   44 00 46 00 33 00 44 00 46 00 7d 00 00 00 00 00   D.F.3.D.F.}.....
+```
+
+5. 在目录中添加文件索引,对LBA8~16写入数据
+    - 写入文件索引,`123.txt`文件索引
+
+```log
+127 [2024/8/18 16:16:17] [106][I/USB] Decode CB:0x2a
+128 [2024/8/18 16:16:17] [106][I/USB] lba: 0x0008
+129 [2024/8/18 16:16:17] [119][I/USB] nsectors: 0x08
+
+0000   42 20 00 49 00 6e 00 66 00 6f 00 0f 00 72 72 00   B .I.n.f.o...rr.
+0010   6d 00 61 00 74 00 69 00 6f 00 00 00 6e 00 00 00   m.a.t.i.o...n...
+0020   01 53 00 79 00 73 00 74 00 65 00 0f 00 72 6d 00   .S.y.s.t.e...rm.
+0030   20 00 56 00 6f 00 6c 00 75 00 00 00 6d 00 65 00    .V.o.l.u...m.e.
+0040   53 59 53 54 45 4d 7e 31 20 20 20 16 00 06 06 82   SYSTEM~1   .....
+0050   12 59 12 59 00 00 07 82 12 59 02 00 00 00 00 00   .Y.Y.....Y......
+0060   e5 b0 65 fa 5e 20 00 87 65 2c 67 0f 00 d2 87 65   ..e.^ ..e,g....e
+0070   63 68 2e 00 74 00 78 00 74 00 00 00 00 00 ff ff   ch..t.x.t.......
+0080   e5 c2 bd a8 ce c4 7e 31 54 58 54 20 00 6d 08 82   ......~1TXT .m..
+0090   12 59 12 59 00 00 09 82 12 59 00 00 00 00 00 00   .Y.Y.....Y......
+00a0   31 32 33 20 20 20 20 20 54 58 54 20 10 6d 08 82   123     TXT .m..
+00b0   12 59 12 59 00 00 09 82 12 59 00 00 00 00 00 00   .Y.Y.....Y......
+```
+
+6. 在文件扇区写入数据,对LBA43写入数据
+
+```log
+[16:16:21] [708][I/USB] Decode CB:0x2a
+[16:16:21] [708][I/USB] lba: 0x002b
+[16:16:21] [708][I/USB] nsectors: 0x01
+
+0000   30 30 30 30 20 20 20 35 35 20 35 33 20 34 32 20   0000   55 53 42 
+0010   34 33 20 36 30 20 39 35 20 63 61 20 31 36 20 30   43 60 95 ca 16 0
+0020   30 20 30 30 20 30 30 20 30 30 20 30 30 20 30 30   0 00 00 00 00 00
+0030   20 30 36 20 31 65 0d 0a 30 30 31 30 20 20 20 30    06 1e..0010   0
+0040   30 20 30 30 20 30 30 20 30 31 20 30 30 20 30 30   0 00 00 01 00 00
+0050   20 30 30 20 30 30 20 30 30 20 30 30 20 30 30 20    00 00 00 00 00 
+0060   30 30 20 30 30 20 30 30 20 30 30 0d 0a 00 00 00   00 00 00 00.....
+```
+
+#### 42.3.3.3.1.4 U盘弹出操作
+
+- 使用`SCSI_CMD_PREVENTMEDIAREMOVAL`命令进行交互完成,任务栏弹出使用的命令
+- 使用`SCSI_CMD_STARTSTOPUNIT`,盘符执行弹出使用
+
+### 42.3.3.2 msc function
+
+#### 42.3.1.1 init
+```c
+void msc_ram_init(uint8_t busid, uint32_t reg_base)
+{
+    usbd_desc_register(busid, msc_ram_descriptor);
+    usbd_add_interface(busid, usbd_msc_init_intf(busid, &intf0, MSC_OUT_EP, MSC_IN_EP));
+
+    usbd_initialize(busid, reg_base, usbd_event_handler);
+}
+```
+
+#### 42.3.3.2.2 usbd_msc_init_intf
+
+```c
+struct usbd_interface *usbd_msc_init_intf(uint8_t busid, struct usbd_interface *intf, const uint8_t out_ep, const uint8_t in_ep)
+{
+    intf->class_interface_handler = msc_storage_class_interface_request_handler;
+    intf->class_endpoint_handler = NULL;
+    intf->vendor_handler = NULL;
+    intf->notify_handler = msc_storage_notify_handler;
+
+    mass_ep_data[busid][MSD_OUT_EP_IDX].ep_addr = out_ep;
+    mass_ep_data[busid][MSD_OUT_EP_IDX].ep_cb = mass_storage_bulk_out;
+    mass_ep_data[busid][MSD_IN_EP_IDX].ep_addr = in_ep;
+    mass_ep_data[busid][MSD_IN_EP_IDX].ep_cb = mass_storage_bulk_in;
+
+    usbd_add_endpoint(busid, &mass_ep_data[busid][MSD_OUT_EP_IDX]);
+    usbd_add_endpoint(busid, &mass_ep_data[busid][MSD_IN_EP_IDX]);
+
+    memset((uint8_t *)&g_usbd_msc[busid], 0, sizeof(struct usbd_msc_priv));
+
+    usdb_msc_set_max_lun(busid);//设置最大LUN,定义了 USB 大容量存储类 （MSC） 设备可以支持的最大逻辑单元号 （LUN） 数。
+    for (uint8_t i = 0u; i <= g_usbd_msc[busid].max_lun; i++) {
+        usbd_msc_get_cap(busid, i, &g_usbd_msc[busid].scsi_blk_nbr[i], &g_usbd_msc[busid].scsi_blk_size[i]);
+
+        if (g_usbd_msc[busid].scsi_blk_size[i] > CONFIG_USBDEV_MSC_MAX_BUFSIZE) {
+            USB_LOG_ERR("msc block buffer overflow\r\n");
+            return NULL;
+        }
+    }
+
+    return intf;
+}
+```
+
+#### 42.3.3.2.3 usbd_msc_get_cap
+
+- 需要自行实现,以下为示例
+
+```c
+void usbd_msc_get_cap(uint8_t busid, uint8_t lun, uint32_t *block_num, uint32_t *block_size)
+{
+    *block_num = 1000; //Pretend having so many buffer,not has actually.
+    *block_size = BLOCK_SIZE;
+}
+```
+
+#### 42.3.3.2.4 msc_storage_notify_handler
+
+```c
+void msc_storage_notify_handler(uint8_t busid, uint8_t event, void *arg)
+{
+    switch (event) {
+        case USBD_EVENT_INIT:
+#ifdef CONFIG_USBDEV_MSC_THREAD
+            g_usbd_msc[busid].usbd_msc_mq = usb_osal_mq_create(1);
+            if (g_usbd_msc[busid].usbd_msc_mq == NULL) {
+                USB_LOG_ERR("No memory to alloc for g_usbd_msc[busid].usbd_msc_mq\r\n");
+            }
+            g_usbd_msc[busid].usbd_msc_thread = usb_osal_thread_create("usbd_msc", CONFIG_USBDEV_MSC_STACKSIZE, CONFIG_USBDEV_MSC_PRIO, usbdev_msc_thread, (void *)busid);
+            if (g_usbd_msc[busid].usbd_msc_thread == NULL) {
+                USB_LOG_ERR("No memory to alloc for g_usbd_msc[busid].usbd_msc_thread\r\n");
+            }
+#endif
+            break;
+        case USBD_EVENT_DEINIT:
+#ifdef CONFIG_USBDEV_MSC_THREAD
+            if (g_usbd_msc[busid].usbd_msc_mq) {
+                usb_osal_mq_delete(g_usbd_msc[busid].usbd_msc_mq);
+            }
+            if (g_usbd_msc[busid].usbd_msc_thread) {
+                usb_osal_thread_delete(g_usbd_msc[busid].usbd_msc_thread);
+            }
+#endif
+            break;
+        case USBD_EVENT_RESET:
+            usbd_msc_reset(busid);
+            break;
+        case USBD_EVENT_CONFIGURED:
+            USB_LOG_DBG("Start reading cbw\r\n");
+            usbd_ep_start_read(busid, mass_ep_data[busid][MSD_OUT_EP_IDX].ep_addr, (uint8_t *)&g_usbd_msc[busid].cbw, USB_SIZEOF_MSC_CBW);
+            break;
+
+        default:
+            break;
+    }
+}
+```
+
+
+#### 42.3.3.2.5 mass_storage_bulk_out
+
+- out端点回调函数,根据`stage`状态执行不同操作
+
+```c
+void mass_storage_bulk_out(uint8_t busid, uint8_t ep, uint32_t nbytes)
+{
+    switch (g_usbd_msc[busid].stage) {
+        case MSC_READ_CBW:
+            if (SCSI_CBWDecode(busid, nbytes) == false) {
+                USB_LOG_ERR("Command:0x%02x decode err\r\n", g_usbd_msc[busid].cbw.CB[0]);
+                usbd_msc_bot_abort(busid);
+                return;
+            }
+            break;
+        case MSC_DATA_OUT:
+            switch (g_usbd_msc[busid].cbw.CB[0]) {
+                case SCSI_CMD_WRITE10:
+                case SCSI_CMD_WRITE12:
+#ifdef CONFIG_USBDEV_MSC_THREAD
+                    g_usbd_msc[busid].nbytes = nbytes;
+                    usb_osal_mq_send(g_usbd_msc[busid].usbd_msc_mq, MSC_DATA_OUT);
+#else
+                    if (SCSI_processWrite(busid, nbytes) == false) {
+                        usbd_msc_send_csw(busid, CSW_STATUS_CMD_FAILED); /* send fail status to host,and the host will retry*/
+                    }
+#endif
+                    break;
+                default:
+                    break;
+            }
+            break;
+        default:
+            break;
+    }
+}
+```
+
+##### 42.3.3.2.5.1 SCSI_CBWDecode
+
+- 解码CBW,并根据命令执行不同操作
+
+```c
+static bool SCSI_CBWDecode(uint8_t busid, uint32_t nbytes)
+{
+    uint8_t *buf2send = g_usbd_msc[busid].block_buffer;
+    uint32_t len2send = 0;
+    bool ret = false;
+
+    if (nbytes != sizeof(struct CBW)) {
+        USB_LOG_ERR("size != sizeof(cbw)\r\n");
+        SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+        return false;
+    }
+
+    g_usbd_msc[busid].csw.dTag = g_usbd_msc[busid].cbw.dTag;
+    g_usbd_msc[busid].csw.dDataResidue = g_usbd_msc[busid].cbw.dDataLength;
+
+    if ((g_usbd_msc[busid].cbw.dSignature != MSC_CBW_Signature) || (g_usbd_msc[busid].cbw.bCBLength < 1) || (g_usbd_msc[busid].cbw.bCBLength > 16)) {
+        SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+        return false;
+    } else {
+        USB_LOG_DBG("Decode CB:0x%02x\r\n", g_usbd_msc[busid].cbw.CB[0]);
+        switch (g_usbd_msc[busid].cbw.CB[0]) {
+            default:
+                SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+                USB_LOG_WRN("unsupported cmd:0x%02x\r\n", g_usbd_msc[busid].cbw.CB[0]);
+                ret = false;
+                break;
+        }
+    }
+    if (ret) {
+        if (g_usbd_msc[busid].stage == MSC_READ_CBW) {
+            if (len2send) {
+                USB_LOG_DBG("Send info len:%d\r\n", len2send);
+                usbd_msc_send_info(busid, buf2send, len2send);
+            } else {
+                usbd_msc_send_csw(busid, CSW_STATUS_CMD_PASSED);
+            }
+        }
+    }
+    return ret;
+}
+```
+
+###### 42.3.3.2.5.1.1 SCSI_CMD_INQUIRY 0x12
+
+- copy默认的inquiry信息,并回复
+
+```c
+        if (g_usbd_msc[busid].cbw.CB[4] < SCSIRESP_INQUIRY_SIZEOF) {
+            data_len = g_usbd_msc[busid].cbw.CB[4];
+        }
+        memcpy(*data, (uint8_t *)inquiry, data_len);
+
+    *len = data_len;
+```
+
+
+###### 42.3.3.2.5.1.2 usbd_msc_send_info
+
+- 发送信息
+
+```c
+static void usbd_msc_send_info(uint8_t busid, uint8_t *buffer, uint8_t size)
+{
+    size = MIN(size, g_usbd_msc[busid].cbw.dDataLength);
+
+    /* updating the State Machine , so that we send CSW when this
+	 * transfer is complete, ie when we get a bulk in callback
+	 */
+    g_usbd_msc[busid].stage = MSC_SEND_CSW;
+
+    usbd_ep_start_write(busid, mass_ep_data[busid][MSD_IN_EP_IDX].ep_addr, buffer, size);
+
+    g_usbd_msc[busid].csw.dDataResidue -= size;
+    g_usbd_msc[busid].csw.bStatus = CSW_STATUS_CMD_PASSED;
+}
+```
+
+#### 42.3.3.2.6 mass_storage_bulk_in
+
+- in端点回调函数,根据`stage`状态执行不同操作
+
+```c
+void mass_storage_bulk_in(uint8_t busid, uint8_t ep, uint32_t nbytes)
+{
+    switch (g_usbd_msc[busid].stage) {
+        case MSC_DATA_IN:
+            switch (g_usbd_msc[busid].cbw.CB[0]) {
+                case SCSI_CMD_READ10:
+                case SCSI_CMD_READ12:
+#ifdef CONFIG_USBDEV_MSC_THREAD
+                    usb_osal_mq_send(g_usbd_msc[busid].usbd_msc_mq, MSC_DATA_IN);
+#else
+                    if (SCSI_processRead(busid) == false) {
+                        usbd_msc_send_csw(busid, CSW_STATUS_CMD_FAILED); /* send fail status to host,and the host will retry*/
+                        return;
+                    }
+#endif
+                    break;
+                default:
+                    break;
+            }
+            break;
+        /*the device has to send a CSW*/
+        case MSC_SEND_CSW:
+            usbd_msc_send_csw(busid, CSW_STATUS_CMD_PASSED);
+            break;
+
+        /*the host has received the CSW*/
+        case MSC_WAIT_CSW:
+            g_usbd_msc[busid].stage = MSC_READ_CBW;
+            USB_LOG_DBG("Start reading cbw\r\n");
+            usbd_ep_start_read(busid, mass_ep_data[busid][MSD_OUT_EP_IDX].ep_addr, (uint8_t *)&g_usbd_msc[busid].cbw, USB_SIZEOF_MSC_CBW);
+            break;
+
+        default:
+            break;
+    }
+}
+```
+
+##### 42.3.3.2.6.1 MSC_SEND_CSW
+
+```c
+usbd_msc_send_csw(busid, CSW_STATUS_CMD_PASSED);
+```
+
+#### 42.3.3.2.7 usbd_msc_send_csw
+
+- 发送CSW,并设置状态为`MSC_WAIT_CSW`,等待主机发送批量传输
+
+```c
+static void usbd_msc_send_csw(uint8_t busid, uint8_t CSW_Status)
+{
+    g_usbd_msc[busid].csw.dSignature = MSC_CSW_Signature;
+    g_usbd_msc[busid].csw.bStatus = CSW_Status;
+
+    /* updating the State Machine , so that we wait CSW when this
+	 * transfer is complete, ie when we get a bulk in callback
+	 */
+    g_usbd_msc[busid].stage = MSC_WAIT_CSW;
+
+    USB_LOG_DBG("Send csw\r\n");
+    usbd_ep_start_write(busid, mass_ep_data[busid][MSD_IN_EP_IDX].ep_addr, (uint8_t *)&g_usbd_msc[busid].csw, sizeof(struct CSW));
+}
+```
+
+#### 42.3.3.2.8 SCSI_processRead
+
+1. 判断最小传输长度
+2. 通过`usbd_msc_sector_read`接口读取数据
+3. 更新开始扇区,剩余扇区,数据长度
+4. CBW需要获取扇区数为0,设置状态为`MSC_SEND_CSW`
+5. 通过`usbd_ep_start_write`发送数据
+
+```c
+static bool SCSI_processRead(uint8_t busid)
+{
+    uint32_t transfer_len;
+
+    USB_LOG_DBG("read lba:%d\r\n", g_usbd_msc[busid].start_sector);
+
+    transfer_len = MIN(g_usbd_msc[busid].nsectors * g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN], CONFIG_USBDEV_MSC_MAX_BUFSIZE);
+
+    if (usbd_msc_sector_read(busid, g_usbd_msc[busid].cbw.bLUN, g_usbd_msc[busid].start_sector, g_usbd_msc[busid].block_buffer, transfer_len) != 0) {
+        SCSI_SetSenseData(busid, SCSI_KCQHE_UREINRESERVEDAREA);
+        return false;
+    }
+
+    g_usbd_msc[busid].start_sector += (transfer_len / g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN]);
+    g_usbd_msc[busid].nsectors -= (transfer_len / g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN]);
+    g_usbd_msc[busid].csw.dDataResidue -= transfer_len;
+
+    if (g_usbd_msc[busid].nsectors == 0) {
+        g_usbd_msc[busid].stage = MSC_SEND_CSW;
+    }
+
+    usbd_ep_start_write(busid, mass_ep_data[busid][MSD_IN_EP_IDX].ep_addr, g_usbd_msc[busid].block_buffer, transfer_len);
+
+    return true;
+}
+```
+
+#### 42.3.3.2.9 usbd_msc_sector_read
+
+- 需要自行实现,以下为示例
+
+```c
+int usbd_msc_sector_read(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length)
+{
+    if (sector < BLOCK_COUNT)
+        memcpy(buffer, mass_block[sector].BlockSpace, length);
+    return 0;
+}
+```
+
+### 42.3.3.2.10 usbd_msc_sector_write
+
+- 需要自行实现,以下为示例
+
+```c
+int usbd_msc_sector_write(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length)
+{
+    if (sector < BLOCK_COUNT)
+        memcpy(mass_block[sector].BlockSpace, buffer, length);
+    return 0;
+}
+```
+
+### 42.3.3.3 msc_ram_descriptor
+
+- bInterfaceClass : USB_DEVICE_CLASS_MASS_STORAGE 0x08
+- bInterfaceSubClass : MSC_SUBCLASS_SCSI 0x06
+- bInterfaceProtocol : MSC_PROTOCOL_BULK_ONLY 0x50
+    - USB大容量存储类仅大容量(BBB)传输
+
+- 设置了两个端点,一个接收,一个发送
+
+```c
+#define MSC_DESCRIPTOR_INIT(bFirstInterface, out_ep, in_ep, wMaxPacketSize, str_idx) \
+    /* Interface */                                              \
+    0x09,                          /* bLength */                 \
+    USB_DESCRIPTOR_TYPE_INTERFACE, /* bDescriptorType */         \
+    bFirstInterface,               /* bInterfaceNumber */        \
+    0x00,                          /* bAlternateSetting */       \
+    0x02,                          /* bNumEndpoints */           \
+    USB_DEVICE_CLASS_MASS_STORAGE, /* bInterfaceClass */         \
+    MSC_SUBCLASS_SCSI,             /* bInterfaceSubClass */      \
+    MSC_PROTOCOL_BULK_ONLY,        /* bInterfaceProtocol */      \
+    str_idx,                       /* iInterface */              \
+    0x07,                          /* bLength */                 \
+    USB_DESCRIPTOR_TYPE_ENDPOINT,  /* bDescriptorType */         \
+    out_ep,                        /* bEndpointAddress */        \
+    0x02,                          /* bmAttributes */            \
+    WBVAL(wMaxPacketSize),         /* wMaxPacketSize */          \
+    0x00,                          /* bInterval */               \
+    0x07,                          /* bLength */                 \
+    USB_DESCRIPTOR_TYPE_ENDPOINT,  /* bDescriptorType */         \
+    in_ep,                         /* bEndpointAddress */        \
+    0x02,                          /* bmAttributes */            \
+    WBVAL(wMaxPacketSize),         /* wMaxPacketSize */          \
+    0x00                           /* bInterval */
+```
+
+```c
+const uint8_t msc_ram_descriptor[] = {
+    USB_DEVICE_DESCRIPTOR_INIT(USB_2_0, 0x00, 0x00, 0x00, USBD_VID, USBD_PID, 0x0200, 0x01),
+    USB_CONFIG_DESCRIPTOR_INIT(USB_CONFIG_SIZE, 0x01, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
+    MSC_DESCRIPTOR_INIT(0x00, MSC_OUT_EP, MSC_IN_EP, MSC_MAX_MPS, 0x02),
+    ///////////////////////////////////////
+    /// string0 descriptor
+    ///////////////////////////////////////
+    USB_LANGID_INIT(USBD_LANGID_STRING),
+    ///////////////////////////////////////
+    /// string1 descriptor
+    ///////////////////////////////////////
+    0x14,                       /* bLength */
+    USB_DESCRIPTOR_TYPE_STRING, /* bDescriptorType */
+    'C', 0x00,                  /* wcChar0 */
+    'h', 0x00,                  /* wcChar1 */
+    'e', 0x00,                  /* wcChar2 */
+    'r', 0x00,                  /* wcChar3 */
+    'r', 0x00,                  /* wcChar4 */
+    'y', 0x00,                  /* wcChar5 */
+    'U', 0x00,                  /* wcChar6 */
+    'S', 0x00,                  /* wcChar7 */
+    'B', 0x00,                  /* wcChar8 */
+    ///////////////////////////////////////
+    /// string2 descriptor
+    ///////////////////////////////////////
+    0x26,                       /* bLength */
+    USB_DESCRIPTOR_TYPE_STRING, /* bDescriptorType */
+    'C', 0x00,                  /* wcChar0 */
+    'h', 0x00,                  /* wcChar1 */
+    'e', 0x00,                  /* wcChar2 */
+    'r', 0x00,                  /* wcChar3 */
+    'r', 0x00,                  /* wcChar4 */
+    'y', 0x00,                  /* wcChar5 */
+    'U', 0x00,                  /* wcChar6 */
+    'S', 0x00,                  /* wcChar7 */
+    'B', 0x00,                  /* wcChar8 */
+    ' ', 0x00,                  /* wcChar9 */
+    'M', 0x00,                  /* wcChar10 */
+    'S', 0x00,                  /* wcChar11 */
+    'C', 0x00,                  /* wcChar12 */
+    ' ', 0x00,                  /* wcChar13 */
+    'D', 0x00,                  /* wcChar14 */
+    'E', 0x00,                  /* wcChar15 */
+    'M', 0x00,                  /* wcChar16 */
+    'O', 0x00,                  /* wcChar17 */
+    ///////////////////////////////////////
+    /// string3 descriptor
+    ///////////////////////////////////////
+    0x16,                       /* bLength */
+    USB_DESCRIPTOR_TYPE_STRING, /* bDescriptorType */
+    '2', 0x00,                  /* wcChar0 */
+    '0', 0x00,                  /* wcChar1 */
+    '2', 0x00,                  /* wcChar2 */
+    '2', 0x00,                  /* wcChar3 */
+    '1', 0x00,                  /* wcChar4 */
+    '2', 0x00,                  /* wcChar5 */
+    '3', 0x00,                  /* wcChar6 */
+    '4', 0x00,                  /* wcChar7 */
+    '5', 0x00,                  /* wcChar8 */
+    '6', 0x00,                  /* wcChar9 */
+#ifdef CONFIG_USB_HS
+    ///////////////////////////////////////
+    /// device qualifier descriptor
+    ///////////////////////////////////////
+    0x0a,
+    USB_DESCRIPTOR_TYPE_DEVICE_QUALIFIER,
+    0x00,
+    0x02,
+    0x00,
+    0x00,
+    0x00,
+    0x40,
+    0x01,
+    0x00,
+#endif
+    0x00
+};
+```
+
+### 42.3.3.4 Mass Storage Request Codes
+
+#### 42.3.3.4.1 Get Max LUN (GML) 0xFE
+
+- 由USB大容量存储类仅限大容量(BBB)传输分配
+
+### 42.3.3.5 Bulk-Only Transport Protocol
+
+- 该规范处理仅批量传输，或者换句话说，仅通过批量端点(不通过中断或控制端点)传输命令、数据和状态。此规范仅使用默认管道清除Bulk端点上的STALL条件，并发出如下所定义的特定于类的请求。本规范不要求使用中断端点。
+- 该规范定义了对共享公共设备特性的逻辑单元的支持。虽然这个特性提供了必要的支持，允许类似的大容量存储设备共享一个通用的USB接口描述符，但它并不打算用于实现接口桥接设备。
+
+#### 42.3.3.5.1 CBW (Command Block Wrapper)
+
+- 表 5-1 命令块包装器 (Command Block Wrapper)
+
+| 字节 | 字段名称                | 描述 |
+|------|-------------------------|-------------|
+| 0-3  | dCBWSignature           | 用于识别此数据包为 CBW 的签名。 |
+| 4-7  | dCBWTag                 | 主机发送的标签，用于将此 CBW 与相应的 CSW 关联。 |
+| 8-11 | dCBWDataTransferLength  | 主机期望在此命令中传输的数据字节数。 |
+| 12   | bmCBWFlags              | 指示数据传输方向的标志。 |
+| 13   | bCBWLUN                 | 与此命令关联的逻辑单元号。 |
+| 14   | 保留                   | 保留 (0) |
+| 15-30| 保留                   | 保留 (0) |
+
+* **dCBWSignature**: 此字段包含 `43425355h`，用于识别传入的 CBW。
+* **dCBWTag**: 用于将 CBW 与相应的 CSW 关联的唯一标识符。
+    - **位 7**: 方向 - 如果 dCBWDataTransferLength 字段为零，设备应忽略此位，否则：
+        - 0 = 数据从主机传输到设备（Data-Out）
+        - 1 = 数据从设备传输到主机（Data-In）
+    - **位 6**: 废弃。主机应将此位设置为零。
+    - **位 5-0**: 保留 - 主机应将这些位设置为零。
+    * **bmCBWFlags**: 指示设备是否应忽略或遵守 `bCBWCBLength` 中的值。
+* **dCBWDataTransferLength**: 主机期望在 Bulk-In 或 Bulk-Out 端点（由方向位指示）上传输的数据字节数。如果此字段为零，则设备和主机在 CBW 和相应的 CSW 之间不传输数据，设备应忽略 bmCBWFlags 中的方向位的值。
+* **bCBWLUN**: 对于支持多个 LUN 的设备，主机应在此字段中放置发送命令块的 LUN。否则，主机应将此字段设置为零。
+* **bCBWCBLength**: 此值定义命令块的有效长度。唯一合法的值是 1 到 16（01h 到 10h）。所有其他值均为保留值。
+* **CBWCB**: 设备要执行的命令块。设备应将此字段中的前 `bCBWCBLength` 字节解释为由 `bInterfaceSubClass` 标识的命令集定义的命令块。如果设备支持的命令集使用少于 16（10h）字节的命令块，则应首先传输有效字节，从偏移量 15（Fh）开始。设备应忽略 `CBWCB` 字段中偏移量（15 + `bCBWCBLength` - 1）之后的内容。
+
+#### 42.3.3.5.2 SCSI Command
+
+- https://www.staff.uni-mainz.de/tacke/scsi/SCSI2-08.html
+
+##### 42.3.3.5.2.1 SCSI_CMD_INQUIRY 0x12
+
+- 参考<<usbmassbulk_10.pdf>> 6.4.2 INQUIRY命令
+- INQUIRY命令(参见表58)请求将有关逻辑单元和SCSI目标设备的信息发送到应用程序客户端。
+
+- 表 58 INQUIRY 命令
+
+| Byte | Bit 7 | Bit 6 | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0 |
+|------|-------|-------|-------|-------|-------|-------|-------|-------|
+| 0    | OPERATION CODE (12h) |       |       |       |       |       |       |       |
+| 1    | Reserved |       |       |       |       |       | Formerly | EVPD  |
+| 2    | PAGE CODE |       |       |       |       |       |       |       |
+| 3 - 4 | ALLOCATION LENGTH|
+| 5    | CONTROL |       |       |       |       |       |       |       |
+
+- **EVPD（启用重要产品数据）位**：设置为 1 时，指定设备服务器应返回由页面代码字段指定的重要产品数据。如果 EVPD 位设置为 0，设备服务器应返回标准 INQUIRY 数据（见 3.6.2）。如果在 EVPD 位设置为 0 时页面代码字段不为零，则命令应以 CHECK CONDITION 状态终止，感知键设置为 ILLEGAL REQUEST，附加感知代码设置为 INVALID FIELD IN CDB。
+- **CMDDT（命令支持数据）位**：此位已被 T10 委员会声明为废弃。然而，它仍然包含在内，因为某些产品可能会实现此功能。有关此位的描述，请参见 SPC-2。如果 EVPD 和 CMDDT 位都为 1，目标应返回 CHECK CONDITION 状态，感知键设置为 ILLEGAL REQUEST，附加感知代码为 Invalid Field in CDB。当 EVPD 位为 1 时，页面或操作码字段指定目标应返回的重要产品数据页面。
+- **ALLOCATION LENGTH**: 如果EVPD设置为0，则分配长度至少为5，这样将返回参数数据(参见3.6.2)中的ADDITIONAL length字段。如果EVPD设置为1，则分配长度应该至少为4，这样就会返回参数数据(参见5.4)中的PAGE length字段。
+
+- 回复的为:`Standard INQUIRY data format` 标准INQUIRY数据格式
+
+```c
+    uint8_t inquiry[SCSIRESP_INQUIRY_SIZEOF] = {
+        /* 36 */
+
+        /* LUN 0 */
+        /*
+         * Qualifier: 设备类型连接到逻辑单元
+         * Device Type:直接存取块设备(如磁盘)
+        */
+        0x00,
+        /*
+         * RMB: 0x80 可移动介质
+         * Device-type modifier: 0x00 不支持
+         */
+        0x80,
+        /*
+        * ANSI-approved version: 设备遵循SCSI的这个版本。本规范保留用于指定ANSI批准后的标准。
+        * ECMA 版本: 目标未声明符合 ISO 版本的 SCSI （ISO 9316）
+        * ISO 版本: 目标未声明符合 ECMA 版本的 SCSI （ECMA 111）
+        */
+        0x02,
+        /*
+         * Response Data Format: 0x02 表示数据应采用本国际标准中规定的格式。 
+         * AENC: 处理器设备不支持异步事件通知
+         * TrmIOP: 0x00 设备不支持 TERMINATE I/O PROCESS 消息
+        */
+        0x02,
+        // 分配长度
+        (SCSIRESP_INQUIRY_SIZEOF - 5),
+        //reserverd
+        0x00,
+        //reserverd
+        0x00,
+        /*
+         * RelAdr: 0x00 设备不支持相对地址
+         * WBus32: 0x00 设备不支持32位总线
+         * WBus16: 0x00 设备不支持16位总线
+         * 如果 Wbus16 和 Wbus32 位的值均为零，则设备仅支持 8 位宽的数据传输。
+         * Sync: 0x00 设备不支持同步数据传输
+         * Linked: 0x00 设备不支持连接命令
+         * CmdQue: 0x00 设备不支持命令队列
+         * SftRe: 0x00 设备不支持软重置
+        */
+        0x00,
+        ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', /* 供应商   : 8 bytes */
+        ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', /* 产品标识 : 16 Bytes */
+        ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+        ' ', ' ', ' ', ' ' /* 版本号      : 4 Bytes */
+    };
+
+    memcpy(&inquiry[8], CONFIG_USBDEV_MSC_MANUFACTURER_STRING, strlen(CONFIG_USBDEV_MSC_MANUFACTURER_STRING));
+    memcpy(&inquiry[16], CONFIG_USBDEV_MSC_PRODUCT_STRING, strlen(CONFIG_USBDEV_MSC_PRODUCT_STRING));
+    memcpy(&inquiry[32], CONFIG_USBDEV_MSC_VERSION_STRING, strlen(CONFIG_USBDEV_MSC_VERSION_STRING));
+```
+
+##### 42.3.3.5.2.2 SCSI_CMD_READFORMATCAPACITIES 0x23
+
+- 参见<<usbmass-ufi10.pdf>> 第4节
+- 发送`[23 00 00 00 00 00 00 00 fc 00 00 00 00 00 00 00]`
+    - CB: 0x23
+    - LUN: 0x00
+    - Allocation Length: 0xfc = 252
+- 在收到这个命令块后，UFI设备将容量列表返回给Bulk In端点上的主机。
+- `scsi_blk_size`和`scsi_blk_nbr`通过`usbd_msc_get_cap`获取
+
+```c
+static bool SCSI_readFormatCapacity(uint8_t busid, uint8_t **data, uint32_t *len)
+{
+    uint8_t format_capacity[SCSIRESP_READFORMATCAPACITIES_SIZEOF] = {
+        0x00,
+        0x00,
+        0x00,
+        0x08, /* Capacity List Length */
+        /*Number of Blocks*/
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] >> 24) & 0xff),
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] >> 16) & 0xff),
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] >> 8) & 0xff),
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] >> 0) & 0xff),
+        /*
+        * 01b: Unformatted Media
+        * 02b: Formatted Media
+        * 03b: No Cartridge in Device
+        */
+        0x02, /* Descriptor Code: Formatted Media */
+        0x00, 
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN] >> 8) & 0xff),
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN] >> 0) & 0xff),  /* Block Length */
+    };
+
+    memcpy(*data, (uint8_t *)format_capacity, SCSIRESP_READFORMATCAPACITIES_SIZEOF);
+    *len = SCSIRESP_READFORMATCAPACITIES_SIZEOF;
+    return true;
+}
+```
+
+##### 42.3.3.5.2.3 SCSI_CMD_READCAPACITY10 0x25
+
+- READ capacity命令允许主机请求当前安装的介质的容量
+
+```c
+static bool SCSI_readCapacity10(uint8_t busid, uint8_t **data, uint32_t *len)
+{
+    if (g_usbd_msc[busid].cbw.dDataLength == 0U) {
+        SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+        return false;
+    }
+
+    uint8_t capacity10[SCSIRESP_READCAPACITY10_SIZEOF] = {
+        (uint8_t)(((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] - 1) >> 24) & 0xff),
+        (uint8_t)(((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] - 1) >> 16) & 0xff),
+        (uint8_t)(((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] - 1) >> 8) & 0xff),
+        (uint8_t)(((g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN] - 1) >> 0) & 0xff),
+
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN] >> 24) & 0xff),
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN] >> 16) & 0xff),
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN] >> 8) & 0xff),
+        (uint8_t)((g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN] >> 0) & 0xff),
+    };
+
+    memcpy(*data, (uint8_t *)capacity10, SCSIRESP_READCAPACITY10_SIZEOF);
+    *len = SCSIRESP_READCAPACITY10_SIZEOF;
+    return true;
+}
+```
+
+##### 42.3.3.5.3 SCSI_CMD_MODESENSE6 0x1A
+
+- MODE SENSE(6)命令为设备服务器向应用程序客户机报告参数提供了一种方法。
+
+|      |   |   |   |   |   |   |   |
+|------|---|---|---|---|---|---|---|
+| **Bit**    | **7** | **6** | **5** | **4** | **3** | **2** | **1** | **0** |
+| **0**      | OPERATION CODE (1Ah) ||||||
+| **1**      || Reserved || DBD || Reserved ||
+| **2**      || PC PAGE CODE||||||
+| **3**      ||SUBPAGE CODE|
+| **4**      || ALLOCATION LENGTH||||||
+| **5**      || CONTROL|||||||
+
+- **DBD（禁用块描述符）位**：如果 DBD 位设置为 1，则设备服务器应返回参数数据，其中不包含块描述符。如果 DBD 位设置为 0，则设备服务器应返回参数数据，其中包含块描述符。
+- **PC（页面控制）字段**：此字段指定设备服务器应返回的参数数据页面。如果 PC 字段为零，则设备服务器应返回当前值。如果 PC 字段为 1，则设备服务器应返回默认值。如果 PC 字段为 2，则设备服务器应返回保存值。如果 PC 字段为 3，则设备服务器应返回更改值。
+- **PAGE CODE 字段**：指定要返回的模式页
+- **SUBPAGE CODE 字段**：指定要返回的模式页的子页
+- **ALLOCATION LENGTH 字段**：此字段指定设备服务器应返回的参数数据的长度（以字节为单位）。如果 ALLOCATION LENGTH 字段为零，则设备服务器应返回参数数据的长度，以便填充主机分配的数据缓冲区。如果 ALLOCATION LENGTH 字段为非零值，则设备服务器应返回参数数据的长度，以便填充主机分配的数据缓冲区，但不得超过 ALLOCATION LENGTH 字段中指定的长度。
+- **CONTROL 字段**：此字段包含用于错误检测和纠正的 CRC 或校验和。
+
+```c
+static bool SCSI_modeSense6(uint8_t busid, uint8_t **data, uint32_t *len)
+{
+    uint8_t data_len = 4;
+    if (g_usbd_msc[busid].cbw.dDataLength == 0U) {
+        SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+        return false;
+    }
+    if (g_usbd_msc[busid].cbw.CB[4] < SCSIRESP_MODEPARAMETERHDR6_SIZEOF) {
+        data_len = g_usbd_msc[busid].cbw.CB[4];
+    }
+
+    uint8_t sense6[SCSIRESP_MODEPARAMETERHDR6_SIZEOF] = { 0x03, 0x00, 0x00, 0x00 };
+
+    if (g_usbd_msc[busid].readonly) {
+        sense6[2] = 0x80;
+    }
+    memcpy(*data, (uint8_t *)sense6, data_len);
+    *len = data_len;
+    return true;
+}
+```
+
+##### 42.3.3.5.4 SCSI_CMD_READ10 0x28
+
+- READ(10)命令(参见表97)请求设备服务器读取指定的逻辑块并将它们传输到data-in缓冲区。读取的每个逻辑块包括用户数据，如果介质已启用保护信息进行格式化，还包括保护信息。传输的每个逻辑块包括用户数据，也可能包括基于RDPROTECT字段和介质格式的保护信息。应该返回最近写入地址逻辑块的数据值
+
+- 获取传输过来需要读取的LBA和读取的块数,并判断是否超出范围
+- 判断`dDataLength`是否和`nsectors * scsi_blk_size`相等
+- 设置`stage`为`MSC_DATA_IN`,并发送`MSC_DATA_IN`消息
+
+```c
+static bool SCSI_read10(uint8_t busid, uint8_t **data, uint32_t *len)
+{
+    if (((g_usbd_msc[busid].cbw.bmFlags & 0x80U) != 0x80U) || (g_usbd_msc[busid].cbw.dDataLength == 0U)) {
+        SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+        return false;
+    }
+
+    g_usbd_msc[busid].start_sector = GET_BE32(&g_usbd_msc[busid].cbw.CB[2]); /* Logical Block Address of First Block */
+    USB_LOG_DBG("lba: 0x%04x\r\n", g_usbd_msc[busid].start_sector);
+
+    g_usbd_msc[busid].nsectors = GET_BE16(&g_usbd_msc[busid].cbw.CB[7]); /* Number of Blocks to transfer */
+    USB_LOG_DBG("nsectors: 0x%02x\r\n", g_usbd_msc[busid].nsectors);
+
+    if ((g_usbd_msc[busid].start_sector + g_usbd_msc[busid].nsectors) > g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN]) {
+        SCSI_SetSenseData(busid, SCSI_KCQIR_LBAOUTOFRANGE);
+        USB_LOG_ERR("LBA out of range\r\n");
+        return false;
+    }
+
+    if (g_usbd_msc[busid].cbw.dDataLength != (g_usbd_msc[busid].nsectors * g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN])) {
+        USB_LOG_ERR("scsi_blk_len does not match with dDataLength\r\n");
+        return false;
+    }
+    g_usbd_msc[busid].stage = MSC_DATA_IN;
+#if defined(CONFIG_USBDEV_MSC_THREAD)
+    usb_osal_mq_send(g_usbd_msc[busid].usbd_msc_mq, MSC_DATA_IN);
+#elif defined(CONFIG_USBDEV_MSC_POLLING)
+    chry_ringbuffer_write_byte(&g_usbd_msc[busid].msc_rb, MSC_DATA_IN);
+    return true;
+#else
+    return SCSI_processRead(busid);
+#endif
+}
+```
+
+##### 42.3.3.5.2.5 SCSI_CMD_TESTUNITREADY 0x00
+
+- TEST UNIT READY命令(参见表202)提供了一种检查逻辑单元是否就绪的方法。这不是要求自测。如果逻辑单元能够接受适当的介质访问命令而不返回CHECK CONDITION状态，则该命令应返回GOOD状态。如果逻辑单元无法运行或处于需要应用程序客户端操作(例如，START unit命令)使逻辑单元准备就绪的状态，则该命令应以CHECK CONDITION状态终止，并将感测键设置为NOT ready。
+
+```c
+static bool SCSI_testUnitReady(uint8_t busid, uint8_t **data, uint32_t *len)
+{
+    if (g_usbd_msc[busid].cbw.dDataLength != 0U) {
+        SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+        return false;
+    }
+    *data = NULL;
+    *len = 0;
+    return true;
+}
+```
+
+##### 42.3.3.5.2.6 SCSI_CMD_PREVENTMEDIAREMOVAL 0x1E
+
+- 这个命令告诉UFI设备启用或禁用删除逻辑单元中的介质
+
+| 字节 | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
+|------|---|---|---|---|---|---|---|---|
+| **0** | 操作码 (4Eh) | | | | | | | |
+| **1** | 逻辑单元号 | | | | | | | |
+| **2** | 保留 | | | | | | | |
+| **3** | 保留 | | | | | | | |
+| **4** | 保留 | | | | | | | Prevent |
+| **5** | 保留 | | | | | | | |
+| **6** | 保留 | | | | | | | |
+| **7** | 保留 | | | | | | | |
+| **8** | 保留 | | | | | | | |
+| **9** | 保留 | | | | | | | |
+| **10** | 保留 | | | | | | | |
+| **11** | 保留 | | | | | | | |
+
+-  Prevent: 0x01 防止介质删除 0x00 允许介质删除
+
+```c
+static bool SCSI_preventAllowMediaRemoval(uint8_t busid, uint8_t **data, uint32_t *len)
+{
+    if (g_usbd_msc[busid].cbw.dDataLength != 0U) {
+        SCSI_SetSenseData(busid, SCSI_KCQIR_INVALIDCOMMAND);
+        return false;
+    }
+    if (g_usbd_msc[busid].cbw.CB[4] == 0U) {
+        //SCSI_MEDIUM_UNLOCKED;
+    } else {
+        //SCSI_MEDIUM_LOCKED;
+    }
+    *data = NULL;
+    *len = 0;
+    return true;
+}
+```
+
+##### 42.3.3.5.2.6 WRITE(10) 0x2a
+
+- WRITE(10)命令请求UFI设备将主机传输的数据写入介质
+
+| 字节 | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
+|------|---|---|---|---|---|---|---|---|
+| **0** | 操作码 (2Ah) | | | | | | | |
+| **1** | 逻辑单元号 | DPO | FUA | 保留 | RelAdr | | | |
+| **2** | (MSB) | 逻辑块地址 | | | | | | |
+| **3** | 逻辑块地址 | | | | | | | |
+| **4** | 逻辑块地址 | | | | | | | |
+| **5** | 逻辑块地址 | (LSB) | | | | | | |
+| **6** | 保留 | | | | | | | |
+| **7** | 传输长度 (MSB) | | | | | | | |
+| **8** | 传输长度 (LSB) | | | | | | | |
+| **9** | 保留 | | | | | | | |
+| **10** | 保留 | | | | | | | |
+| **11** | 保留 | | | | | | | |
+
+- 逻辑块地址:该字段指定写操作开始的逻辑块。
+
+- 传输长度:传输长度字段指定要传输的连续数据逻辑块的数量。传输长度为0表示不传输逻辑块。此情况不应视为错误，也不应写入任何数据。任何其他值表示需要传输的逻辑块的数量
+
+- 主机将要写入的数据发送到Bulk Output端点上的UFI设备。传输的字节数应该是传输长度乘以逻辑块大小。如果WRITE命令成功完成，则UFI设备将感测数据设置为NO sense。否则，设备应将感测数据设置为第5节所列的适当值。如果WRITE命令因为USB位填充错误或CRC错误而被终止，UFI设备应该将感测数据设置为USB to HOST SYSTEM INTERFACE FAILURE。注意:即使发生了写错误，介质也可能被改变了。对于跨越磁盘的多个物理磁道的命令块尤其如此。
+
+```c
+/*
+    1. 获取传输过来需要写入的LBA和写入的块数,并判断是否超出范围
+    2. 判断`dDataLength`是否和`nsectors * scsi_blk_size`相等
+    3. 设置`stage`为`MSC_DATA_OUT`,并发送`MSC_DATA_OUT`消息
+*/
+static bool SCSI_write10(uint8_t busid, uint8_t **data, uint32_t *len)
+{
+    uint32_t data_len = 0;
+
+    g_usbd_msc[busid].start_sector = GET_BE32(&g_usbd_msc[busid].cbw.CB[2]); /* Logical Block Address of First Block */
+    USB_LOG_INFO("lba: 0x%04x\r\n", g_usbd_msc[busid].start_sector);
+
+    g_usbd_msc[busid].nsectors = GET_BE16(&g_usbd_msc[busid].cbw.CB[7]); /* Number of Blocks to transfer */
+    USB_LOG_INFO("nsectors: 0x%02x\r\n", g_usbd_msc[busid].nsectors);
+
+    data_len = g_usbd_msc[busid].nsectors * g_usbd_msc[busid].scsi_blk_size[g_usbd_msc[busid].cbw.bLUN];
+    if ((g_usbd_msc[busid].start_sector + g_usbd_msc[busid].nsectors) > g_usbd_msc[busid].scsi_blk_nbr[g_usbd_msc[busid].cbw.bLUN]) {
+        USB_LOG_ERR("LBA out of range\r\n");
+        return false;
+    }
+
+    if (g_usbd_msc[busid].cbw.dDataLength != data_len) {
+        return false;
+    }
+    g_usbd_msc[busid].stage = MSC_DATA_OUT;
+    data_len = MIN(data_len, CONFIG_USBDEV_MSC_MAX_BUFSIZE);
+    usbd_ep_start_read(busid, mass_ep_data[busid][MSD_OUT_EP_IDX].ep_addr, g_usbd_msc[busid].block_buffer, data_len);
+    return true;
+}
+```
+
+#### 42.3.3.5.3 Command Status Wrapper (CSW)
+
+- 表 5.3 - 命令块状态值
+
+| 值   | 描述                     |
+| ---- | ------------------------ |
+| 00h  | 命令通过（“good status”）    |
+| 01h  | 命令失败                 |
+| 02h  | 阶段错误                 |
+| 03和04号 | 预留（Obsolete）       |
+| 05到FF号 | 预留                  |
+
+
+```c
+/** MSC Bulk-Only Command Status Wrapper (CSW) */
+struct CSW {
+    uint32_t dSignature;   /* 'USBS' = 0x53425355 */
+    uint32_t dTag;         /* Same tag as original command */
+    uint32_t dDataResidue; /* Amount not transferred */
+    uint8_t bStatus;       /* Status of transfer */
+} __PACKED;
+```
+
+## 42.3.4 HID (Human Interface Device)
+
+### 42.3.4.1 抓包
+
+### 42.3.4.2 描述符
+
+
+
+```c
+static const uint8_t hid_descriptor[] = {
+    USB_DEVICE_DESCRIPTOR_INIT(USB_2_0, 0x00, 0x00, 0x00, USBD_VID, USBD_PID, 0x0002, 0x01),
+    USB_CONFIG_DESCRIPTOR_INIT(USB_HID_CONFIG_DESC_SIZ, 0x01, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
+
+    /************** Descriptor of Joystick Mouse interface ****************/
+    /* 09 */
+    0x09,                          /* bLength: Interface Descriptor size */
+    USB_DESCRIPTOR_TYPE_INTERFACE, /* bDescriptorType: Interface descriptor type */
+    0x00,                          /* bInterfaceNumber: Number of Interface */
+    0x00,                          /* bAlternateSetting: Alternate setting */
+    0x01,                          /* bNumEndpoints */
+    0x03,                          /* bInterfaceClass: HID */
+    0x01,                          /* bInterfaceSubClass : 1=BOOT, 0=no boot */
+    0x01,                          /* nInterfaceProtocol : 0=none, 1=keyboard, 2=mouse */
+    0,                             /* iInterface: Index of string descriptor */
+    /******************** Descriptor of Joystick Mouse HID ********************/
+    /* 18 */
+    0x09,                    /* bLength: HID Descriptor size */
+    HID_DESCRIPTOR_TYPE_HID, /* bDescriptorType: HID */
+    0x11,                    /* bcdHID: HID Class Spec release number */
+    0x01,
+    0x00,                          /* bCountryCode: Hardware target country */
+    0x01,                          /* bNumDescriptors: Number of HID class descriptors to follow */
+    0x22,                          /* bDescriptorType */
+    HID_KEYBOARD_REPORT_DESC_SIZE, /* wItemLength: Total length of Report descriptor */
+    0x00,
+    /******************** Descriptor of Mouse endpoint ********************/
+    /* 27 */
+    0x07,                         /* bLength: Endpoint Descriptor size */
+    USB_DESCRIPTOR_TYPE_ENDPOINT, /* bDescriptorType: */
+    HID_INT_EP,                   /* bEndpointAddress: Endpoint Address (IN) */
+    0x03,                         /* bmAttributes: Interrupt endpoint */
+    HID_INT_EP_SIZE,              /* wMaxPacketSize: 4 Byte max */
+    0x00,
+    HID_INT_EP_INTERVAL, /* bInterval: Polling Interval */
+    /* 34 */
+    ///////////////////////////////////////
+    /// string0 descriptor
+    ///////////////////////////////////////
+    USB_LANGID_INIT(USBD_LANGID_STRING),
+    ///////////////////////////////////////
+    /// string1 descriptor
+    ///////////////////////////////////////
+    0x14,                       /* bLength */
+    USB_DESCRIPTOR_TYPE_STRING, /* bDescriptorType */
+    'C', 0x00,                  /* wcChar0 */
+    'h', 0x00,                  /* wcChar1 */
+    'e', 0x00,                  /* wcChar2 */
+    'r', 0x00,                  /* wcChar3 */
+    'r', 0x00,                  /* wcChar4 */
+    'y', 0x00,                  /* wcChar5 */
+    'U', 0x00,                  /* wcChar6 */
+    'S', 0x00,                  /* wcChar7 */
+    'B', 0x00,                  /* wcChar8 */
+    ///////////////////////////////////////
+    /// string2 descriptor
+    ///////////////////////////////////////
+    0x26,                       /* bLength */
+    USB_DESCRIPTOR_TYPE_STRING, /* bDescriptorType */
+    'C', 0x00,                  /* wcChar0 */
+    'h', 0x00,                  /* wcChar1 */
+    'e', 0x00,                  /* wcChar2 */
+    'r', 0x00,                  /* wcChar3 */
+    'r', 0x00,                  /* wcChar4 */
+    'y', 0x00,                  /* wcChar5 */
+    'U', 0x00,                  /* wcChar6 */
+    'S', 0x00,                  /* wcChar7 */
+    'B', 0x00,                  /* wcChar8 */
+    ' ', 0x00,                  /* wcChar9 */
+    'H', 0x00,                  /* wcChar10 */
+    'I', 0x00,                  /* wcChar11 */
+    'D', 0x00,                  /* wcChar12 */
+    ' ', 0x00,                  /* wcChar13 */
+    'D', 0x00,                  /* wcChar14 */
+    'E', 0x00,                  /* wcChar15 */
+    'M', 0x00,                  /* wcChar16 */
+    'O', 0x00,                  /* wcChar17 */
+    ///////////////////////////////////////
+    /// string3 descriptor
+    ///////////////////////////////////////
+    0x16,                       /* bLength */
+    USB_DESCRIPTOR_TYPE_STRING, /* bDescriptorType */
+    '2', 0x00,                  /* wcChar0 */
+    '0', 0x00,                  /* wcChar1 */
+    '2', 0x00,                  /* wcChar2 */
+    '2', 0x00,                  /* wcChar3 */
+    '1', 0x00,                  /* wcChar4 */
+    '2', 0x00,                  /* wcChar5 */
+    '3', 0x00,                  /* wcChar6 */
+    '4', 0x00,                  /* wcChar7 */
+    '5', 0x00,                  /* wcChar8 */
+    '6', 0x00,                  /* wcChar9 */
+#ifdef CONFIG_USB_HS
+    ///////////////////////////////////////
+    /// device qualifier descriptor
+    ///////////////////////////////////////
+    0x0a,
+    USB_DESCRIPTOR_TYPE_DEVICE_QUALIFIER,
+    0x00,
+    0x02,
+    0x00,
+    0x00,
+    0x00,
+    0x40,
+    0x01,
+    0x00,
+#endif
+    0x00
+};
+```
